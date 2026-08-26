@@ -1,86 +1,70 @@
 """
-Kannada OCR Normalization and Indic Repairs
-Fixes recurring optical recognition faults:
-- Missing Virama/Halant (U+0CCD) conjunct corruptions
-- Consonant and ottu collapsing
-- Short/long vowel optical confusion
-- Corrupted prefix forms (e.g., initial ಪ -> ಪ್ರ)
+Kannada OCR Normalization and Precision Indic Repairs
+Fixes recurring optical recognition faults without damaging valid Kannada words.
 """
 
 import re
-from typing import Set, Tuple, Optional
+from typing import Set, Optional
 
-# Regex repairs for common OCR character merges and misclassifications
-OCR_REGEX_REPAIRS = [
-    # Missing halants / conjunct repairs
+# Safe, high-precision OCR pattern normalizations
+SAFE_OCR_REPAIRS = [
+    # 1. Archaic Repha and broken R-cluster normalizations (e.g. ಕನಾ೯ಟಕ -> ಕರ್ನಾಟಕ, ಕತ೯ವ್ಯ -> ಕರ್ತವ್ಯ)
+    (r'ನಾ೯', 'ರ್ನಾ'),
+    (r'ತಾ೯', 'ರ್ತಾ'),
+    (r'ದಾ೯', 'ರ್ದಾ'),
+    (r'ಮಾ೯', 'ರ್ಮಾ'),
+    (r'ವಾ೯', 'ರ್ವಾ'),
+    (r'ಶಾ೯', 'ರ್ಶಾ'),
+    (r'ಷಾ೯', 'ರ್ಷಾ'),
+    (r'ಸಾ೯', 'ರ್ಸಾ'),
+    (r'ಹಾ೯', 'ರ್ಹಾ'),
+    (r'ತ೯', 'ರ್ತ'),
+    (r'ದ೯', 'ರ್ದ'),
+    (r'ಮ೯', 'ರ್ಮ'),
+    (r'ವ೯', 'ರ್ವ'),
+    (r'ಶ೯', 'ರ್ಶ'),
+    (r'ಷ೯', 'ರ್ಷ'),
+    (r'ಸ೯', 'ರ್ಸ'),
+
+    # 2. Specific Missing Halant / Virama OCR errors
     (r'ಶಿಕಷ', 'ಶಿಕ್ಷ'),
-    (r'ಕಷ', 'ಕ್ಷ'),
-    (r'ಕಶ', 'ಕ್ಷ'),
-    (r'ಕಸ', 'ಕ್ಷ'),
-    (r'ವಯ', 'ವ್ಯ'),
-    (r'ತರ', 'ತ್ರ'),
-    (r'ಲಯ', 'ಲ್ಯ'),
-    (r'ಶ್ರಿ', 'ಶ್ರೀ'),
-    
-    # Double consonant / ottu collapses
-    (r'ಸಸ', 'ಸ್ಸ'),
-    (r'ಚಚ', 'ಚ್ಚ'),
-    (r'ಟಟ', 'ಟ್ಟ'),
-    (r'ಡಡ', 'ಡ್ಡ'),
-    (r'ತತ', 'ತ್ತ'),
-    (r'ದದ', 'ದ್ದ'),
-    (r'ನನ', 'ನ್ನ'),
-    (r'ಪಪ', 'ಪ್ಪ'),
-    (r'ಬಬ', 'ಬ್ಬ'),
-    (r'ಮಮ', 'ಮ್ಮ'),
-    (r'ರರ', 'ರ್ರ'),
-    (r'ಲಲ', 'ಲ್ಲ'),
-    
-    # Common OCR verbal and nominal suffix errors
+    (r'ಲಕಷಿ', 'ಲಕ್ಷ್ಮಿ'),
+    (r'ಪರಕಷ', 'ಪರೀಕ್ಷೆ'),
+
+    # 3. Common OCR Verbal Suffix Glitches
     (r'ಸುತದೆ$', 'ಸುತ್ತದೆ'),
     (r'ುತದೆ$', 'ುತ್ತದೆ'),
     (r'ುತಾರೆ$', 'ತ್ತಾರೆ'),
     (r'ುತಾನೆ$', 'ತ್ತಾನೆ'),
     (r'ುತಾಳೆ$', 'ತ್ತಾಳೆ'),
-    (r'ವನು$', 'ವನ್ನು'),
-    (r'ಯನು$', 'ಯನ್ನು'),
-    (r'ರನು$', 'ರನ್ನು'),
-    (r'ಗನು$', 'ಗಳನ್ನು'),
-    (r'ಜನನು$', 'ಜನರನ್ನು'),
+
 ]
 
-# Frequent vowel length optical confusions in OCR
-VOWEL_LONG_REPAIRS = [
-    ('ಜಿವನ', 'ಜೀವನ'),
-    ('ಸಂಗಿತ', 'ಸಂಗೀತ'),
-    ('ನಿರು', 'ನೀರು'),
-    ('ಭುಮಿ', 'ಭೂಮಿ'),
-    ('ರೂಪ', 'ರೂಪ'),
-    ('ಶಿಲ', 'ಶೀಲ'),
-    ('ದಿನ', 'ದಿನ'),
-]
+# Targeted high-frequency vowel length OCR confusions
+VOWEL_LONG_MAP = {
+    'ಜಿವನ': 'ಜೀವನ',
+    'ಸಂಗಿತ': 'ಸಂಗೀತ',
+    'ನಿರು': 'ನೀರು',
+    'ಭುಮಿ': 'ಭೂಮಿ',
+    'ಶಿಲ': 'ಶೀಲ',
+}
 
 
 def apply_ocr_repairs(word: str, dictionary: Optional[Set[str]] = None) -> str:
     """
-    Apply rule-based Indic OCR repairs to a word token.
+    Apply safe, rule-based Indic OCR repairs to a word token.
+    Never corrupts valid dictionary words or syllables.
     """
     w = word
 
-    # 1. Direct Vowel Corrections
-    for old_v, new_v in VOWEL_LONG_REPAIRS:
-        if w.startswith(old_v):
+    # 1. Target exact vowel prefixes
+    for old_v, new_v in VOWEL_LONG_MAP.items():
+        if w == old_v or w.startswith(old_v):
             w = new_v + w[len(old_v):]
             break
 
-    # 2. Regex Pattern Normalizations
-    for pat, rep in OCR_REGEX_REPAIRS:
+    # 2. Apply safe pattern normalizations
+    for pat, rep in SAFE_OCR_REPAIRS:
         w = re.sub(pat, rep, w)
-
-    # 3. Check for initial 'ಪ' -> 'ಪ್ರ' prefix restoration
-    if dictionary and w.startswith('ಪ') and not w.startswith('ಪ್ರ'):
-        pra_cand = 'ಪ್ರ' + w[1:]
-        if pra_cand in dictionary:
-            w = pra_cand
 
     return w

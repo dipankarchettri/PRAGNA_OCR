@@ -41,13 +41,11 @@ class TestKannadaPipeline(unittest.TestCase):
         
         # Missing virama repairs
         self.assertEqual(apply_ocr_repairs("ಶಿಕಷ", dict_words), "ಶಿಕ್ಷ")
-        self.assertEqual(apply_ocr_repairs("ವಯ", dict_words), "ವ್ಯ")
-        
-        # Double consonant repairs
-        self.assertEqual(apply_ocr_repairs("ಸಸ", dict_words), "ಸ್ಸ")
+        self.assertEqual(apply_ocr_repairs("ಕನಾ೯ಟಕ", dict_words), "ಕರ್ನಾಟಕ")
         
         # Vowel repairs
         self.assertTrue(apply_ocr_repairs("ಜಿವನ", dict_words).startswith("ಜೀವನ"))
+
 
     def test_morphology_and_sandhi(self):
         dict_words = get_dictionary()
