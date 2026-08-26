@@ -109,28 +109,55 @@ function initLiveAutocorrect() {
 
     function highlightCorrectedHtml(text, corrections) {
         if (!text) return '';
-        let html = escapeHtml(text);
         if (!corrections || !Array.isArray(corrections) || corrections.length === 0) {
-            return html;
+            return escapeHtml(text);
         }
 
         try {
+            // Build unique key lookup (longest keys first to prevent partial overlaps)
+            const map = new Map();
             corrections.forEach(c => {
-                if (!c || !c.correction || !c.original || c.correction === c.original) return;
-                const diffClass = getDiffClass(c.type);
-                const escapedCorr = escapeHtml(c.correction);
-                const escapedOrig = escapeHtml(c.original);
-                const safePattern = escapeRegExp(escapedCorr);
-                if (!safePattern) return;
-                const reg = new RegExp(`(${safePattern})`, 'g');
-                html = html.replace(reg, `<mark class="apple-diff-pill ${diffClass}" title="Original OCR: ${escapedOrig}">$1</mark>`);
+                if (c && c.correction && c.original && c.correction !== c.original) {
+                    if (!map.has(c.correction)) {
+                        map.set(c.correction, c);
+                    }
+                }
             });
+
+            if (map.size === 0) return escapeHtml(text);
+
+            const sortedKeys = Array.from(map.keys()).sort((a, b) => b.length - a.length);
+            const pattern = sortedKeys.map(k => escapeRegExp(k)).join('|');
+            const masterRegex = new RegExp(`(${pattern})`, 'g');
+
+            let result = '';
+            let lastIndex = 0;
+            let match;
+
+            while ((match = masterRegex.exec(text)) !== null) {
+                const matchIndex = match.index;
+                const matchedText = match[0];
+
+                result += escapeHtml(text.substring(lastIndex, matchIndex));
+
+                const c = map.get(matchedText);
+                const diffClass = getDiffClass(c ? c.type : 'ocr_repair');
+                const orig = escapeHtml(c ? c.original : matchedText);
+
+                result += `<mark class="apple-diff-pill ${diffClass}" title="Original OCR: ${orig}">${escapeHtml(matchedText)}</mark>`;
+
+                lastIndex = matchIndex + matchedText.length;
+            }
+
+            result += escapeHtml(text.substring(lastIndex));
+            return result;
+
         } catch (e) {
             console.error("Highlight rendering error:", e);
             return escapeHtml(text);
         }
-        return html;
     }
+
 
 
     function renderLiveResults(data) {
