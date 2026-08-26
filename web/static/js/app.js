@@ -102,20 +102,36 @@ function initLiveAutocorrect() {
         return '<span class="tag-badge green">Word Correction</span>';
     }
 
+    function escapeRegExp(string) {
+        if (!string) return '';
+        return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
     function highlightCorrectedHtml(text, corrections) {
-        let html = escapeHtml(text || '');
-        if (!corrections || corrections.length === 0) return html;
-        corrections.forEach(c => {
-            if (c.correction && c.original && c.correction !== c.original) {
+        if (!text) return '';
+        let html = escapeHtml(text);
+        if (!corrections || !Array.isArray(corrections) || corrections.length === 0) {
+            return html;
+        }
+
+        try {
+            corrections.forEach(c => {
+                if (!c || !c.correction || !c.original || c.correction === c.original) return;
                 const diffClass = getDiffClass(c.type);
                 const escapedCorr = escapeHtml(c.correction);
                 const escapedOrig = escapeHtml(c.original);
-                const reg = new RegExp(`(${escapedCorr})`, 'g');
-                html = html.replace(reg, `<mark class="apple-diff-pill ${diffClass}" title="Original: ${escapedOrig} [${c.type || 'repaired'}]">$1</mark>`);
-            }
-        });
+                const safePattern = escapeRegExp(escapedCorr);
+                if (!safePattern) return;
+                const reg = new RegExp(`(${safePattern})`, 'g');
+                html = html.replace(reg, `<mark class="apple-diff-pill ${diffClass}" title="Original OCR: ${escapedOrig}">$1</mark>`);
+            });
+        } catch (e) {
+            console.error("Highlight rendering error:", e);
+            return escapeHtml(text);
+        }
         return html;
     }
+
 
     function renderLiveResults(data) {
         latestCorrectedText = data.corrected;
