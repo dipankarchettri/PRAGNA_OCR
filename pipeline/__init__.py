@@ -255,7 +255,8 @@ def process_document(
     export_json_report(report_data, json_report_path)
 
     if progress_callback:
-        progress_callback({'stage': 'complete', 'message': 'Document processing complete!', 'percent': 100})
+        progress_callback({'stage': 'finalizing', 'message': 'Finalizing outputs and preparing report...', 'percent': 98})
+
 
 
     return {

@@ -197,17 +197,26 @@ function initDocumentUpload() {
         selectedFile = file;
         const nameEl = document.getElementById('selectedFileName');
         if (nameEl) {
-            nameEl.textContent = `Selected: ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB)`;
+            nameEl.textContent = `✓ Selected: ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB)`;
             nameEl.style.display = 'block';
         }
+        if (dropzone) {
+            dropzone.style.borderColor = 'var(--apple-blue)';
+            dropzone.style.background = 'rgba(0, 113, 227, 0.05)';
+        }
         processBtn.disabled = false;
+        processBtn.textContent = 'Run Ingest & Correction';
     }
 
     if (processBtn) {
         processBtn.addEventListener('click', () => {
-            if (!selectedFile) return;
+            if (!selectedFile) {
+                if (fileInput) fileInput.click();
+                return;
+            }
 
             processBtn.disabled = true;
+            processBtn.textContent = 'Processing...';
             docResultsCard.style.display = 'none';
             progressCard.style.display = 'block';
 
@@ -264,6 +273,7 @@ function initDocumentUpload() {
         });
     }
 
+
     function startPipelineStream(sessionId, totalPages) {
         progressStageBadge.textContent = 'Processing';
         progressBarFill.style.width = '15%';
@@ -317,7 +327,12 @@ function initDocumentUpload() {
                     progressBarFill.style.width = `${event.percent}%`;
                     progressPercent.textContent = `${event.percent}%`;
                     progressStatusText.textContent = event.message;
-                } else if (event.stage === 'complete') {
+                } else if (event.stage === 'finalizing') {
+                    progressStageBadge.textContent = 'Finalizing';
+                    progressBarFill.style.width = '98%';
+                    progressPercent.textContent = '98%';
+                    progressStatusText.textContent = event.message || 'Preparing report...';
+                } else if (event.stage === 'complete' && event.payload) {
                     progressPercent.textContent = '100%';
                     progressBarFill.style.width = '100%';
                     progressStatusText.textContent = 'Done!';
@@ -325,7 +340,7 @@ function initDocumentUpload() {
                     setTimeout(() => {
                         resetProgress();
                         renderDocumentResults(event.payload);
-                    }, 500);
+                    }, 400);
                 } else if (event.stage === 'error') {
                     activeEventSource.close();
                     alert(`Pipeline error: ${event.message || event.error}`);
@@ -343,6 +358,7 @@ function initDocumentUpload() {
 
     function resetProgress() {
         processBtn.disabled = false;
+        processBtn.textContent = 'Run Ingest & Correction';
         progressCard.style.display = 'none';
         if (activeEventSource) {
             activeEventSource.close();
@@ -351,13 +367,15 @@ function initDocumentUpload() {
     }
 
     function renderDocumentResults(data) {
+        if (!data) return;
         docResultsCard.style.display = 'block';
-        docStatPages.textContent = data.total_pages;
-        docStatFixes.textContent = data.total_corrections;
-        docStatTime.textContent = `${data.latency_seconds}s`;
+        docStatPages.textContent = data.total_pages ?? (data.result ? data.result.total_pages : 0);
+        docStatFixes.textContent = data.total_corrections ?? (data.result ? data.result.total_corrections : 0);
+        docStatTime.textContent = `${data.latency_seconds || 0}s`;
 
         docRawDisplay.textContent = data.raw_text || '(No text extracted)';
         docCorrectedDisplay.textContent = data.corrected_text || '(No text extracted)';
+
 
         btnDownloadPdf.href = data.download_urls.pdf;
         btnDownloadTxt.href = data.download_urls.txt;

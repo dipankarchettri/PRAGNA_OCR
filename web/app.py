@@ -90,6 +90,19 @@ def api_correct_text():
     return jsonify(result)
 
 
+import re
+
+
+def safe_upload_filename(filename: str) -> str:
+    """Safely sanitize uploaded filename preserving extension and Kannada/Unicode characters."""
+    ext = os.path.splitext(filename)[1].lower()
+    base = os.path.splitext(os.path.basename(filename))[0]
+    cleaned = re.sub(r'[\/\\:\*\?"<>\|\x00]', '_', base).strip('._ ')
+    if not cleaned:
+        cleaned = "document"
+    return f"{cleaned}{ext}"
+
+
 @app.route('/api/upload', methods=['POST'])
 def api_upload_file():
     """
@@ -104,7 +117,7 @@ def api_upload_file():
         return jsonify({'error': f'Unsupported file type. Allowed: {", ".join(sorted(ALLOWED_EXTENSIONS))}'}), 400
 
     session_id = uuid.uuid4().hex
-    safe_name = secure_filename(file.filename)
+    safe_name = safe_upload_filename(file.filename)
     upload_path = os.path.join(UPLOAD_FOLDER, f"{session_id}_{safe_name}")
     file.save(upload_path)
 
@@ -115,7 +128,8 @@ def api_upload_file():
         try:
             info = inspect_pdf(upload_path)
             total_pages = info['page_count']
-        except Exception:
+        except Exception as e:
+            print(f"Error inspecting PDF: {e}")
             total_pages = 1
 
     _SESSIONS[session_id] = {
@@ -133,6 +147,7 @@ def api_upload_file():
         'file_size_mb': file_size_mb,
         'total_pages': total_pages
     })
+
 
 
 @app.route('/api/process-stream/<session_id>', methods=['GET'])
@@ -233,7 +248,7 @@ def api_process_document():
     save_images = request.form.get('save_images', 'false').lower() == 'true'
 
     session_id = uuid.uuid4().hex
-    safe_name = secure_filename(file.filename)
+    safe_name = safe_upload_filename(file.filename)
     upload_path = os.path.join(UPLOAD_FOLDER, f"{session_id}_{safe_name}")
     file.save(upload_path)
 
