@@ -53,6 +53,9 @@ CONFUSION_PAIRS: Dict[Tuple[str, str], float] = {
 
     # 4. Multi-character / Subscript Ligature OCR Scans (High precision)
     ('ಎಜ', 'ವಿ'): 0.22,
+    ('ಎಿ', 'ಅ'): 0.22,
+    ('ಎಿ', 'ವಿ'): 0.25,
+    ('ಧ್ಯಯ', 'ಧ್ಯಯನ'): 0.22,
     ('ವ್ಮ', 'ಮ್ಮ'): 0.20,
     ('ಮ್ನ', 'ಮ್ಮ'): 0.20,
     ('ಂಜ', 'ಂದ'): 0.20,

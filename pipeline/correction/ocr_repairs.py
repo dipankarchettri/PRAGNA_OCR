@@ -27,7 +27,10 @@ def clean_unicode_glitches(text: str) -> str:
     t = re.sub(r'[\u0CE6\u0C82]+', 'ಂ', t)
     t = re.sub(r'ಂ+', 'ಂ', t)
 
-    # 2. Clean stray punctuation specks before words
+    # 2. Clean invalid independent vowel + dependent matra OCR glitches (e.g. ಎಿ -> ಅ)
+    t = re.sub(r'ಎ[ಿೀ]', 'ಅ', t)
+
+    # 3. Clean stray punctuation specks before words
     t = re.sub(r'^[«“"]\s+', r'“', t)
     return t
 
