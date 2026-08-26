@@ -16,7 +16,6 @@ SUFFIX_NORMALIZATIONS: Dict[str, str] = {
     'ಅಂತಹವಳ್ಳು': 'ಅಂತಹವಳು',
     'ಬಿಟ್ಟತ್ತು': 'ಬಿಟ್ಟಿತ್ತು',
     'ಟ್ಟತ್ತು': 'ಟ್ಟಿತ್ತು',
-    'ಸಂಯುವ': 'ಸಾಯುವ',
 }
 
 BROKEN_SUFFIXES = set(SUFFIX_NORMALIZATIONS.keys())
