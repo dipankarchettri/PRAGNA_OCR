@@ -1,5 +1,5 @@
 /**
- * Kannada OCR & Autocorrect — Frontend Application Logic
+ * Kannada OCR & Autocorrect — Apple-Grade Frontend Logic
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -9,17 +9,17 @@ document.addEventListener('DOMContentLoaded', () => {
     initSystemStatus();
 });
 
-/* ── Tab Switcher ── */
+/* ── Apple Segmented Pill Tab Switcher ── */
 function initTabs() {
-    const tabButtons = document.querySelectorAll('.tab-btn');
-    const tabContents = document.querySelectorAll('.tab-content');
+    const tabButtons = document.querySelectorAll('.segment-btn');
+    const tabPanes = document.querySelectorAll('.tab-pane');
 
     tabButtons.forEach(btn => {
         btn.addEventListener('click', () => {
             const targetId = btn.getAttribute('data-tab');
 
             tabButtons.forEach(b => b.classList.remove('active'));
-            tabContents.forEach(c => c.classList.remove('active'));
+            tabPanes.forEach(p => p.classList.remove('active'));
 
             btn.classList.add('active');
             const targetEl = document.getElementById(targetId);
@@ -57,19 +57,19 @@ function initLiveAutocorrect() {
     if (rawInput) {
         rawInput.addEventListener('input', () => {
             clearTimeout(debounceTimer);
-            debounceTimer = setTimeout(triggerCorrection, 350);
+            debounceTimer = setTimeout(triggerCorrection, 300);
         });
     }
 
     async function triggerCorrection() {
         const text = (rawInput.value || '').trim();
         if (!text) {
-            correctedDisplay.innerHTML = '<span class="text-dim">Corrected text will appear here in real time...</span>';
+            correctedDisplay.innerHTML = '<span style="color: var(--text-tertiary);">Corrected text will appear here in real time...</span>';
             statWords.textContent = '0';
             statFixes.textContent = '0';
             statAccuracy.textContent = '100%';
             statLatency.textContent = '0.00s';
-            tableBody.innerHTML = '<tr><td colspan="4" class="text-center text-dim">No corrections performed yet.</td></tr>';
+            tableBody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-tertiary); padding: 30px;">Type or paste Kannada text above to see live token corrections.</td></tr>';
             latestCorrectedText = '';
             return;
         }
@@ -103,7 +103,7 @@ function initLiveAutocorrect() {
             data.corrections.forEach(c => {
                 const escapedCorr = escapeHtml(c.correction);
                 const reg = new RegExp(`(${escapedCorr})`, 'g');
-                highlighted = highlighted.replace(reg, `<mark class="diff-tag" title="Original: ${escapeHtml(c.original)}">$1</mark>`);
+                highlighted = highlighted.replace(reg, `<mark class="apple-diff-pill" title="Original: ${escapeHtml(c.original)}">$1</mark>`);
             });
         }
         correctedDisplay.innerHTML = highlighted;
@@ -112,14 +112,14 @@ function initLiveAutocorrect() {
         if (data.corrections && data.corrections.length > 0) {
             tableBody.innerHTML = data.corrections.map((c, idx) => `
                 <tr>
-                    <td class="font-mono">${idx + 1}</td>
-                    <td class="tag-original">${escapeHtml(c.original)}</td>
-                    <td class="tag-corrected">${escapeHtml(c.correction)}</td>
-                    <td class="font-mono text-dim">${c.edit_distance}</td>
+                    <td style="font-family: var(--font-mono); color: var(--text-tertiary); font-size: 13px;">${idx + 1}</td>
+                    <td class="tag-red-strike">${escapeHtml(c.original)}</td>
+                    <td class="tag-green-bold">${escapeHtml(c.correction)}</td>
+                    <td style="font-family: var(--font-mono); color: var(--text-secondary); font-size: 13px;">${c.edit_distance}</td>
                 </tr>
             `).join('');
         } else {
-            tableBody.innerHTML = '<tr><td colspan="4" class="text-center text-emerald">✓ All Kannada words are valid & clean! No errors found.</td></tr>';
+            tableBody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--apple-emerald); padding: 24px; font-weight: 500;">✓ Perfect match! All Kannada words are valid & clean.</td></tr>';
         }
     }
 
@@ -127,8 +127,8 @@ function initLiveAutocorrect() {
         copyBtn.addEventListener('click', () => {
             if (latestCorrectedText) {
                 navigator.clipboard.writeText(latestCorrectedText);
-                copyBtn.textContent = '✓ Copied!';
-                setTimeout(() => { copyBtn.textContent = '📋 Copy'; }, 2000);
+                copyBtn.textContent = 'Copied ✓';
+                setTimeout(() => { copyBtn.textContent = 'Copy'; }, 2000);
             }
         });
     }
@@ -141,17 +141,22 @@ function initLiveAutocorrect() {
     }
 }
 
-/* ── Tab 2: Document Upload & Full Pipeline ── */
+/* ── Tab 2: Document Upload & Real-Time Pipeline Stream ── */
 function initDocumentUpload() {
     const dropzone = document.getElementById('uploadDropzone');
     const fileInput = document.getElementById('docFileInput');
     const langSelect = document.getElementById('docLangSelect');
     const dpiSelect = document.getElementById('docDpiSelect');
     const processBtn = document.getElementById('docProcessBtn');
-    const progressBar = document.getElementById('docProgressBar');
-    const progressStatus = document.getElementById('docProgressStatus');
+    
+    const progressCard = document.getElementById('docProgressCard');
+    const progressStageBadge = document.getElementById('docProgressStageBadge');
+    const progressPercent = document.getElementById('docProgressPercent');
+    const progressBarFill = document.getElementById('docProgressBarFill');
+    const progressStatusText = document.getElementById('docProgressStatusText');
+    const progressMetaText = document.getElementById('docProgressMetaText');
+    
     const docResultsCard = document.getElementById('docResultsCard');
-
     const docRawDisplay = document.getElementById('docRawDisplay');
     const docCorrectedDisplay = document.getElementById('docCorrectedDisplay');
     const docStatPages = document.getElementById('docStatPages');
@@ -164,6 +169,7 @@ function initDocumentUpload() {
     const docCorrectionsTableBody = document.getElementById('docCorrectionsTableBody');
 
     let selectedFile = null;
+    let activeEventSource = null;
 
     if (dropzone && fileInput) {
         dropzone.addEventListener('click', () => fileInput.click());
@@ -198,38 +204,150 @@ function initDocumentUpload() {
     }
 
     if (processBtn) {
-        processBtn.addEventListener('click', async () => {
+        processBtn.addEventListener('click', () => {
             if (!selectedFile) return;
 
             processBtn.disabled = true;
-            progressBar.style.display = 'block';
-            progressStatus.textContent = 'Ingesting document and executing Indic OCR...';
             docResultsCard.style.display = 'none';
+            progressCard.style.display = 'block';
 
+            progressStageBadge.textContent = 'Uploading';
+            progressPercent.textContent = '0%';
+            progressBarFill.style.width = '0%';
+            progressStatusText.textContent = `Uploading ${selectedFile.name}...`;
+            progressMetaText.textContent = `0 / ${(selectedFile.size / (1024 * 1024)).toFixed(1)} MB`;
+
+            // Phase 1: Upload with byte progress tracking
+            const xhr = new XMLHttpRequest();
             const formData = new FormData();
             formData.append('file', selectedFile);
-            formData.append('lang', langSelect.value);
-            formData.append('dpi', dpiSelect.value);
+
+            xhr.upload.onprogress = (e) => {
+                if (e.lengthComputable) {
+                    const upPct = Math.round((e.loaded / e.total) * 100);
+                    const loadedMb = (e.loaded / (1024 * 1024)).toFixed(1);
+                    const totalMb = (e.total / (1024 * 1024)).toFixed(1);
+
+                    progressPercent.textContent = `${Math.min(upPct, 99)}%`;
+                    progressBarFill.style.width = `${Math.min(upPct * 0.15, 15)}%`;
+                    progressStatusText.textContent = `Uploading document to server...`;
+                    progressMetaText.textContent = `${loadedMb} / ${totalMb} MB`;
+                }
+            };
+
+            xhr.onload = () => {
+                if (xhr.status === 200) {
+                    try {
+                        const upRes = JSON.parse(xhr.responseText);
+                        if (upRes.success && upRes.session_id) {
+                            startPipelineStream(upRes.session_id, upRes.total_pages);
+                        } else {
+                            throw new Error(upRes.error || 'Upload failed');
+                        }
+                    } catch (err) {
+                        alert(`Upload error: ${err.message}`);
+                        resetProgress();
+                    }
+                } else {
+                    alert(`Upload failed with status ${xhr.status}`);
+                    resetProgress();
+                }
+            };
+
+            xhr.onerror = () => {
+                alert('Network error during upload.');
+                resetProgress();
+            };
+
+            xhr.open('POST', '/api/upload');
+            xhr.send(formData);
+        });
+    }
+
+    function startPipelineStream(sessionId, totalPages) {
+        progressStageBadge.textContent = 'Processing';
+        progressBarFill.style.width = '15%';
+        progressStatusText.textContent = 'Analyzing document and starting Indic OCR engine...';
+        progressMetaText.textContent = `Total Pages: ${totalPages}`;
+
+        const lang = encodeURIComponent(langSelect.value);
+        const dpi = dpiSelect.value;
+        const streamUrl = `/api/process-stream/${sessionId}?lang=${lang}&dpi=${dpi}`;
+
+        if (activeEventSource) {
+            activeEventSource.close();
+        }
+
+        activeEventSource = new EventSource(streamUrl);
+
+        activeEventSource.onmessage = (e) => {
+            if (!e.data || e.data.trim() === ': heartbeat') return;
 
             try {
-                const resp = await fetch('/api/process-document', {
-                    method: 'POST',
-                    body: formData
-                });
-                const data = await resp.json();
+                const event = JSON.parse(e.data);
 
-                if (resp.ok && data.success) {
-                    renderDocumentResults(data);
-                } else {
-                    alert(`Error: ${data.error || 'Failed to process document'}`);
+                if (event.stage === 'inspecting') {
+                    progressStageBadge.textContent = 'Inspecting';
+                    progressBarFill.style.width = `${event.percent || 10}%`;
+                    progressPercent.textContent = `${event.percent || 10}%`;
+                    progressStatusText.textContent = event.message || 'Analyzing document...';
+                } else if (event.stage === 'rasterizing') {
+                    progressStageBadge.textContent = 'Rasterizing';
+                    progressBarFill.style.width = `${event.percent || 15}%`;
+                    progressPercent.textContent = `${event.percent || 15}%`;
+                    progressStatusText.textContent = event.message || 'Rasterizing pages...';
+                } else if (event.stage === 'ocr') {
+                    progressStageBadge.textContent = 'Indic OCR';
+                    progressBarFill.style.width = `${event.percent}%`;
+                    progressPercent.textContent = `${event.percent}%`;
+                    progressStatusText.textContent = event.message;
+                    progressMetaText.textContent = `Page ${event.current_page} of ${event.total_pages}`;
+                } else if (event.stage === 'extracting') {
+                    progressStageBadge.textContent = 'Extracting';
+                    progressBarFill.style.width = `${event.percent}%`;
+                    progressPercent.textContent = `${event.percent}%`;
+                    progressStatusText.textContent = event.message;
+                } else if (event.stage === 'correcting') {
+                    progressStageBadge.textContent = 'Morphology Fix';
+                    progressBarFill.style.width = `${event.percent}%`;
+                    progressPercent.textContent = `${event.percent}%`;
+                    progressStatusText.textContent = event.message;
+                } else if (event.stage === 'exporting') {
+                    progressStageBadge.textContent = 'Exporting PDF';
+                    progressBarFill.style.width = `${event.percent}%`;
+                    progressPercent.textContent = `${event.percent}%`;
+                    progressStatusText.textContent = event.message;
+                } else if (event.stage === 'complete') {
+                    progressPercent.textContent = '100%';
+                    progressBarFill.style.width = '100%';
+                    progressStatusText.textContent = 'Done!';
+                    activeEventSource.close();
+                    setTimeout(() => {
+                        resetProgress();
+                        renderDocumentResults(event.payload);
+                    }, 500);
+                } else if (event.stage === 'error') {
+                    activeEventSource.close();
+                    alert(`Pipeline error: ${event.message || event.error}`);
+                    resetProgress();
                 }
             } catch (err) {
-                alert(`Network error: ${err.message}`);
-            } finally {
-                processBtn.disabled = false;
-                progressBar.style.display = 'none';
+                console.error("SSE parse error:", err);
             }
-        });
+        };
+
+        activeEventSource.onerror = (err) => {
+            console.error("SSE connection error:", err);
+        };
+    }
+
+    function resetProgress() {
+        processBtn.disabled = false;
+        progressCard.style.display = 'none';
+        if (activeEventSource) {
+            activeEventSource.close();
+            activeEventSource = null;
+        }
     }
 
     function renderDocumentResults(data) {
@@ -250,19 +368,20 @@ function initDocumentUpload() {
         if (corrections.length > 0) {
             docCorrectionsTableBody.innerHTML = corrections.map((c, idx) => `
                 <tr>
-                    <td class="font-mono">${idx + 1}</td>
-                    <td class="tag-original">${escapeHtml(c.original)}</td>
-                    <td class="tag-corrected">${escapeHtml(c.correction)}</td>
-                    <td class="font-mono text-dim">${c.edit_distance}</td>
+                    <td style="font-family: var(--font-mono); color: var(--text-tertiary); font-size: 13px;">${idx + 1}</td>
+                    <td class="tag-red-strike">${escapeHtml(c.original)}</td>
+                    <td class="tag-green-bold">${escapeHtml(c.correction)}</td>
+                    <td style="font-family: var(--font-mono); color: var(--text-secondary); font-size: 13px;">${c.edit_distance}</td>
                 </tr>
             `).join('');
         } else {
-            docCorrectionsTableBody.innerHTML = '<tr><td colspan="4" class="text-center text-emerald">✓ Document text is completely clean! No spelling corrections were required.</td></tr>';
+            docCorrectionsTableBody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--apple-emerald); padding: 24px; font-weight: 500;">✓ Document text is completely clean! No corrections were required.</td></tr>';
         }
 
         docResultsCard.scrollIntoView({ behavior: 'smooth' });
     }
 }
+
 
 /* ── Tab 3: System Status ── */
 async function initSystemStatus() {
@@ -273,8 +392,8 @@ async function initSystemStatus() {
         const badge = document.getElementById('headerStatusBadge');
         if (badge) {
             badge.innerHTML = data.tesseract_available
-                ? `<span class="status-dot"></span> Tesseract OCR Active`
-                : `<span style="color:#F43F5E;">●</span> Tesseract Offline (Digital PDFs Only)`;
+                ? `<span class="nav-status-dot"></span> Tesseract Active`
+                : `<span style="color: var(--apple-cyan);">●</span> Morphological Engine Online`;
         }
 
         const tessStatusEl = document.getElementById('diagTessStatus');
@@ -282,17 +401,17 @@ async function initSystemStatus() {
         const langTagsEl = document.getElementById('diagLangTags');
 
         if (tessStatusEl) {
-            tessStatusEl.textContent = data.tesseract_available ? 'Online & Accessible' : 'Not installed in PATH';
-            tessStatusEl.className = data.tesseract_available ? 'stat-value success' : 'stat-value amber';
+            tessStatusEl.textContent = data.tesseract_available ? 'Active' : 'Standby / Digital Mode';
+            tessStatusEl.className = data.tesseract_available ? 'apple-stat-value emerald' : 'apple-stat-value cyan';
         }
 
         if (dictCountEl) {
             dictCountEl.textContent = data.dictionary_words_count.toLocaleString();
         }
 
-        if (langTagsEl && data.installed_languages) {
+        if (langTagsEl && data.installed_languages && data.installed_languages.length > 0) {
             langTagsEl.innerHTML = data.installed_languages.map(l => `
-                <span class="btn btn-secondary btn-sm">${l}</span>
+                <span class="apple-btn apple-btn-secondary apple-btn-sm">${l}</span>
             `).join(' ');
         }
     } catch (e) {

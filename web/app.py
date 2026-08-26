@@ -7,9 +7,12 @@ Provides interactive Web Dashboard and REST APIs for document OCR, live correcti
 import os
 import sys
 import uuid
-import shutil
+import json
+import time
+import queue
+import threading
 from pathlib import Path
-from flask import Flask, render_template, request, jsonify, send_file
+from flask import Flask, render_template, request, jsonify, send_file, Response
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
@@ -27,7 +30,7 @@ from pipeline.ocr import (
     SUPPORTED_LANGUAGES
 )
 from pipeline.correction import get_dictionary, get_word_list
-from pipeline.ingestion import SUPPORTED_IMAGE_EXTENSIONS
+from pipeline.ingestion import SUPPORTED_IMAGE_EXTENSIONS, inspect_pdf, is_pdf_file
 
 app = Flask(__name__)
 CORS(app)
@@ -41,6 +44,9 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(PROCESSED_FOLDER, exist_ok=True)
 
 ALLOWED_EXTENSIONS = {'.pdf'} | SUPPORTED_IMAGE_EXTENSIONS
+
+# Session store for streaming jobs
+_SESSIONS = {}
 
 
 def is_allowed_file(filename: str) -> bool:
@@ -84,9 +90,137 @@ def api_correct_text():
     return jsonify(result)
 
 
+@app.route('/api/upload', methods=['POST'])
+def api_upload_file():
+    """
+    Step 1: Fast file upload endpoint with progress tracking support.
+    Saves file and inspects basic metadata (e.g. page count).
+    """
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file uploaded.'}), 400
+
+    file = request.files['file']
+    if not file.filename or not is_allowed_file(file.filename):
+        return jsonify({'error': f'Unsupported file type. Allowed: {", ".join(sorted(ALLOWED_EXTENSIONS))}'}), 400
+
+    session_id = uuid.uuid4().hex
+    safe_name = secure_filename(file.filename)
+    upload_path = os.path.join(UPLOAD_FOLDER, f"{session_id}_{safe_name}")
+    file.save(upload_path)
+
+    file_size_mb = round(os.path.getsize(upload_path) / (1024 * 1024), 2)
+    total_pages = 1
+
+    if is_pdf_file(upload_path):
+        try:
+            info = inspect_pdf(upload_path)
+            total_pages = info['page_count']
+        except Exception:
+            total_pages = 1
+
+    _SESSIONS[session_id] = {
+        'upload_path': upload_path,
+        'filename': safe_name,
+        'file_size_mb': file_size_mb,
+        'total_pages': total_pages,
+        'created_at': time.time()
+    }
+
+    return jsonify({
+        'success': True,
+        'session_id': session_id,
+        'filename': safe_name,
+        'file_size_mb': file_size_mb,
+        'total_pages': total_pages
+    })
+
+
+@app.route('/api/process-stream/<session_id>', methods=['GET'])
+def api_process_stream(session_id: str):
+    """
+    Step 2: Server-Sent Events (SSE) stream for real-time page-by-page progress.
+    """
+    session_data = _SESSIONS.get(session_id)
+    if not session_data:
+        return jsonify({'error': 'Invalid or expired upload session.'}), 404
+
+    lang = request.args.get('lang', 'kan+eng')
+    dpi = int(request.args.get('dpi', 300))
+    save_images = request.args.get('save_images', 'false').lower() == 'true'
+
+    upload_path = session_data['upload_path']
+    output_dir = os.path.join(PROCESSED_FOLDER, session_id)
+    os.makedirs(output_dir, exist_ok=True)
+
+    event_q = queue.Queue()
+
+    def progress_callback(event):
+        event_q.put(event)
+
+    def worker():
+        try:
+            res = process_document(
+                input_path=upload_path,
+                lang=lang,
+                dpi=dpi,
+                output_dir=output_dir,
+                save_pdf=True,
+                save_images=save_images,
+                progress_callback=progress_callback
+            )
+            event_q.put({
+                'stage': 'complete',
+                'percent': 100,
+                'message': 'Document processing complete!',
+                'payload': {
+                    'session_id': session_id,
+                    'filename': session_data['filename'],
+                    'result': res['report'],
+                    'raw_text': res['raw_text'],
+                    'corrected_text': res['corrected_text'],
+                    'total_pages': res['total_pages'],
+                    'total_corrections': res['total_corrections'],
+                    'latency_seconds': res['latency_seconds'],
+                    'download_urls': {
+                        'pdf': f'/api/download/{session_id}/pdf',
+                        'txt': f'/api/download/{session_id}/txt',
+                        'json': f'/api/download/{session_id}/json'
+                    }
+                }
+            })
+        except Exception as e:
+            event_q.put({
+                'stage': 'error',
+                'error': str(e),
+                'message': f'Error: {str(e)}'
+            })
+
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+
+    def generate_events():
+        while True:
+            try:
+                event = event_q.get(timeout=60)
+                data_str = json.dumps(event, ensure_ascii=False)
+                yield f"data: {data_str}\n\n"
+
+                if event.get('stage') in ('complete', 'error'):
+                    break
+            except queue.Empty:
+                # Keep-alive heartbeat
+                yield f": heartbeat\n\n"
+
+    return Response(generate_events(), mimetype='text/event-stream', headers={
+        'Cache-Control': 'no-cache',
+        'X-Accel-Buffering': 'no',
+        'Connection': 'keep-alive'
+    })
+
+
 @app.route('/api/process-document', methods=['POST'])
 def api_process_document():
-    """Upload and process a PDF or image document end-to-end."""
+    """Direct processing fallback endpoint."""
     if 'file' not in request.files:
         return jsonify({'error': 'No file uploaded.'}), 400
 
@@ -98,7 +232,6 @@ def api_process_document():
     dpi = int(request.form.get('dpi', 300))
     save_images = request.form.get('save_images', 'false').lower() == 'true'
 
-    # Save to unique workspace
     session_id = uuid.uuid4().hex
     safe_name = secure_filename(file.filename)
     upload_path = os.path.join(UPLOAD_FOLDER, f"{session_id}_{safe_name}")
@@ -168,4 +301,4 @@ def download_output(session_id: str, file_type: str):
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     print(f"Starting Kannada OCR & Autocorrect Web App on http://127.0.0.1:{port}")
-    app.run(host='0.0.0.0', port=port, debug=False)
+    app.run(host='0.0.0.0', port=port, debug=False, threaded=True)

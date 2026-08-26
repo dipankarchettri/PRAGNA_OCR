@@ -72,11 +72,30 @@ def init_assets():
             )
             with urllib.request.urlopen(req) as resp, open(FONT_PATH, 'wb') as out_f:
                 shutil.copyfileobj(resp, out_f)
-            print("  [✓] NotoSansKannada-Regular.ttf downloaded successfully")
-        except Exception as e:
-            print(f"  [!] Failed to download font: {e}")
+    # 4. Tesseract Language Models
+    TESSDATA_DIR = os.path.join(BASE_DIR, 'tessdata')
+    os.makedirs(TESSDATA_DIR, exist_ok=True)
+    tess_models = {
+        'kan.traineddata': 'https://github.com/tesseract-ocr/tessdata_fast/raw/main/kan.traineddata',
+        'hin.traineddata': 'https://github.com/tesseract-ocr/tessdata_fast/raw/main/hin.traineddata',
+        'san.traineddata': 'https://github.com/tesseract-ocr/tessdata_fast/raw/main/san.traineddata',
+        'eng.traineddata': 'https://github.com/tesseract-ocr/tessdata_fast/raw/main/eng.traineddata',
+        'osd.traineddata': 'https://github.com/tesseract-ocr/tessdata_fast/raw/main/osd.traineddata',
+    }
+    for model_name, url in tess_models.items():
+        m_path = os.path.join(TESSDATA_DIR, model_name)
+        if os.path.exists(m_path):
+            print(f"  [✓] {model_name} already exists ({os.path.getsize(m_path)} bytes)")
+        else:
+            print(f"  [↓] Downloading {model_name}...")
+            try:
+                urllib.request.urlretrieve(url, m_path)
+                print(f"  [✓] {model_name} downloaded successfully")
+            except Exception as e:
+                print(f"  [!] Failed to download {model_name}: {e}")
 
     print("\nAsset initialization complete!")
+
 
 
 if __name__ == '__main__':

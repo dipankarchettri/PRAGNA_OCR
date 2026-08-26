@@ -3,6 +3,7 @@ Tesseract OCR Engine Wrapper
 Handles multi-language Indic OCR extraction, page data analysis, and layout detection.
 """
 
+import os
 import shutil
 from typing import List, Dict, Any, Optional
 from PIL import Image
@@ -11,6 +12,12 @@ try:
     import pytesseract
 except ImportError:
     pytesseract = None
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+LOCAL_TESSDATA_DIR = os.path.join(BASE_DIR, 'tessdata')
+
+if os.path.exists(LOCAL_TESSDATA_DIR):
+    os.environ['TESSDATA_PREFIX'] = LOCAL_TESSDATA_DIR
 
 # Comprehensive Indic language mappings supported by Tesseract
 SUPPORTED_LANGUAGES = {
@@ -49,10 +56,27 @@ def get_available_languages() -> List[str]:
     """Retrieve list of installed language packs in Tesseract."""
     if not is_tesseract_available():
         return []
+    
+    langs = set()
+    if os.path.exists(LOCAL_TESSDATA_DIR):
+        for f in os.listdir(LOCAL_TESSDATA_DIR):
+            if f.endswith('.traineddata'):
+                langs.add(f.replace('.traineddata', ''))
+
     try:
-        return pytesseract.get_languages()
+        sys_langs = pytesseract.get_languages(config=f'--tessdata-dir "{LOCAL_TESSDATA_DIR}"' if os.path.exists(LOCAL_TESSDATA_DIR) else '')
+        langs.update(sys_langs)
     except Exception:
-        return ['kan', 'eng']
+        pass
+
+    return sorted(list(langs)) if langs else ['kan', 'eng']
+
+
+def _get_tesseract_config(psm: int = 3, oem: int = 3) -> str:
+    parts = [f'--oem {oem}', f'--psm {psm}']
+    if os.path.exists(LOCAL_TESSDATA_DIR):
+        parts.append(f'--tessdata-dir "{LOCAL_TESSDATA_DIR}"')
+    return ' '.join(parts)
 
 
 def ocr_image(
@@ -67,8 +91,9 @@ def ocr_image(
     if not is_tesseract_available():
         raise RuntimeError("Tesseract OCR is not installed or not available in PATH.")
 
-    config = f'--oem {oem} --psm {psm}'
+    config = _get_tesseract_config(psm=psm, oem=oem)
     return pytesseract.image_to_string(image, lang=lang, config=config)
+
 
 
 def ocr_image_with_layout(
@@ -83,7 +108,8 @@ def ocr_image_with_layout(
         raise RuntimeError("Tesseract OCR is not installed or not available in PATH.")
 
     img_w, img_h = image.size
-    data = pytesseract.image_to_data(image, lang=lang, output_type=pytesseract.Output.DICT)
+    config = _get_tesseract_config()
+    data = pytesseract.image_to_data(image, lang=lang, config=config, output_type=pytesseract.Output.DICT)
 
     # Group extracted word boxes by block and line
     lines_map: Dict[tuple, List[Dict[str, Any]]] = {}

@@ -3,114 +3,128 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ಕನ್ನಡ OCR & ಸ್ವಯಂ ತಿದ್ದುಪಡಿ — Kannada OCR & Autocorrect Pipeline</title>
-    <meta name="description" content="End-to-end Indic OCR and Morphological Autocorrect Pipeline for Kannada documents, PDFs, and text.">
+    <title>ಕನ್ನಡ OCR & ಸ್ವಯಂ ತಿದ್ದುಪಡಿ — Precision Indic Intelligence</title>
+    <meta name="description" content="Apple-designed Indic OCR and morphological autocorrect system for high-accuracy Kannada text, PDFs, and image documents.">
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
+    <!-- Apple Floating Sticky Nav -->
+    <div class="apple-nav-wrapper">
+        <nav class="apple-nav">
+            <a href="/" class="nav-brand">
+                <div class="nav-logo-badge">ಕ</div>
+                <span class="nav-title">ಕನ್ನಡ OCR & Autocorrect</span>
+            </a>
+            <div id="headerStatusBadge" class="nav-pill-badge">
+                <span class="nav-status-dot"></span> System Ready
+            </div>
+        </nav>
+    </div>
+
     <div class="app-container">
-        <!-- Header -->
-        <header class="app-header">
-            <div class="brand-section">
-                <div class="brand-logo">ಕ</div>
-                <div class="brand-title">
-                    <h1>ಕನ್ನಡ OCR & ಸ್ವಯಂ ತಿದ್ದುಪಡಿ</h1>
-                    <p>Unified Kannada OCR Ingestion, Morphological Cleaning & Layout-Preserved Export</p>
+        <!-- Hero Section (Apple Showcase) -->
+        <header class="hero-section">
+            <div class="hero-eyebrow">
+                <span>✦</span> Advanced Indic Morphological Engine
+            </div>
+            <h1 class="hero-title">
+                ಕನ್ನಡ OCR & ಸ್ವಯಂ ತಿದ್ದುಪಡಿ
+            </h1>
+            <p class="hero-subtitle">
+                Pro intelligence for Kannada documents. Optical character recognition, deep Sandhi morphology, and layout-preserving PDF generation.
+            </p>
+            
+            <!-- Apple Segmented Pill Navigation -->
+            <div class="segmented-control-wrapper">
+                <div class="segmented-control" role="tablist">
+                    <button class="segment-btn active" data-tab="tabLive" id="tabBtnLive">
+                        Live Text Editor
+                    </button>
+                    <button class="segment-btn" data-tab="tabDocument" id="tabBtnDoc">
+                        Document OCR & Pipeline
+                    </button>
+                    <button class="segment-btn" data-tab="tabDiagnostics" id="tabBtnDiag">
+                        Engine Architecture
+                    </button>
                 </div>
             </div>
-            <div id="headerStatusBadge" class="header-status-badge">
-                <span class="status-dot"></span> Checking System...
-            </div>
         </header>
-
-        <!-- Navigation Tabs -->
-        <nav class="nav-tabs" role="tablist">
-            <button class="tab-btn active" data-tab="tabLive" id="tabBtnLive">
-                <span>📝</span> Live Text Correction
-            </button>
-            <button class="tab-btn" data-tab="tabDocument" id="tabBtnDoc">
-                <span>📄</span> Document OCR & Pipeline
-            </button>
-            <button class="tab-btn" data-tab="tabDiagnostics" id="tabBtnDiag">
-                <span>⚙️</span> Engine Status
-            </button>
-        </nav>
 
         <!-- ───────────────────────────────────────────────────────────── -->
         <!-- TAB 1: Live Interactive Autocorrect -->
         <!-- ───────────────────────────────────────────────────────────── -->
-        <main id="tabLive" class="tab-content active">
-            <!-- Stats -->
-            <div class="stats-bar">
-                <div class="stat-card">
-                    <span class="stat-label">Total Words</span>
-                    <span id="liveStatWords" class="stat-value cyan">0</span>
+        <main id="tabLive" class="tab-pane active">
+            <!-- Minimal Apple Stats Strip -->
+            <div class="apple-stats-grid">
+                <div class="apple-stat-card">
+                    <span class="apple-stat-label">Total Words</span>
+                    <span id="liveStatWords" class="apple-stat-value cyan">0</span>
                 </div>
-                <div class="stat-card">
-                    <span class="stat-label">Errors Corrected</span>
-                    <span id="liveStatFixes" class="stat-value amber">0</span>
+                <div class="apple-stat-card">
+                    <span class="apple-stat-label">Repairs Applied</span>
+                    <span id="liveStatFixes" class="apple-stat-value amber">0</span>
                 </div>
-                <div class="stat-card">
-                    <span class="stat-label">Accuracy Rate</span>
-                    <span id="liveStatAccuracy" class="stat-value success">100%</span>
+                <div class="apple-stat-card">
+                    <span class="apple-stat-label">Accuracy Rate</span>
+                    <span id="liveStatAccuracy" class="apple-stat-value emerald">100%</span>
                 </div>
-                <div class="stat-card">
-                    <span class="stat-label">Latency</span>
-                    <span id="liveStatLatency" class="stat-value">0.00s</span>
+                <div class="apple-stat-card">
+                    <span class="apple-stat-label">Latency</span>
+                    <span id="liveStatLatency" class="apple-stat-value">0.00s</span>
                 </div>
             </div>
 
-            <!-- Split Editor -->
-            <div class="editor-grid">
-                <!-- Input Box -->
-                <div class="editor-box">
-                    <div class="editor-toolbar">
-                        <span>Original / OCR Text (Raw)</span>
+            <!-- Split Canvas -->
+            <div class="editor-canvas-grid">
+                <!-- Input Canvas -->
+                <div class="editor-pane">
+                    <div class="editor-pane-header">
+                        <span>Raw Input / OCR Stream</span>
                         <div style="display: flex; gap: 8px;">
-                            <button id="liveLoadSampleBtn" class="btn btn-secondary btn-sm">Sample Text</button>
-                            <button id="liveClearBtn" class="btn btn-secondary btn-sm">Clear</button>
+                            <button id="liveLoadSampleBtn" class="apple-btn apple-btn-secondary apple-btn-sm">Sample</button>
+                            <button id="liveClearBtn" class="apple-btn apple-btn-secondary apple-btn-sm">Clear</button>
                         </div>
                     </div>
                     <textarea 
                         id="liveRawInput" 
-                        class="editor-textarea" 
+                        class="editor-pane-body" 
                         placeholder="ಇಲ್ಲಿ ಕನ್ನಡ ಪಠ್ಯವನ್ನು ಟೈಪ್ ಮಾಡಿ ಅಥವಾ ಅಂಟಿಸಿ (Type or paste Kannada text here)..."
                         spellcheck="false"
                     ></textarea>
                 </div>
 
-                <!-- Corrected Box -->
-                <div class="editor-box">
-                    <div class="editor-toolbar">
-                        <span>Corrected Output (Cleaned)</span>
-                        <button id="liveCopyBtn" class="btn btn-secondary btn-sm">📋 Copy</button>
+                <!-- Corrected Canvas -->
+                <div class="editor-pane">
+                    <div class="editor-pane-header">
+                        <span>Cleaned & Morphologically Corrected</span>
+                        <button id="liveCopyBtn" class="apple-btn apple-btn-secondary apple-btn-sm">Copy</button>
                     </div>
-                    <div id="liveCorrectedDisplay" class="editor-display">
-                        <span style="color: var(--text-dim);">Corrected text will appear here in real time...</span>
+                    <div id="liveCorrectedDisplay" class="editor-pane-body">
+                        <span style="color: var(--text-tertiary);">Corrected text will appear here in real time...</span>
                     </div>
                 </div>
             </div>
 
-            <!-- Detailed Corrections Card -->
-            <div class="card">
-                <div class="card-header">
-                    <h2><span>🔍</span> Word Correction Log</h2>
+            <!-- Corrections Table Card -->
+            <div class="apple-card">
+                <div class="apple-card-header">
+                    <h2 class="apple-card-title">Detailed Correction Log</h2>
                 </div>
-                <div class="card-body">
-                    <div class="table-container">
-                        <table class="corrections-table">
+                <div class="apple-card-body" style="padding: 0;">
+                    <div class="apple-table-wrap" style="border: none; border-radius: 0;">
+                        <table class="apple-table">
                             <thead>
                                 <tr>
-                                    <th style="width: 60px;">#</th>
-                                    <th>Original Token</th>
+                                    <th style="width: 70px;">#</th>
+                                    <th>Original Optical Token</th>
                                     <th>Corrected Word</th>
                                     <th>Edit Cost</th>
                                 </tr>
                             </thead>
                             <tbody id="liveCorrectionsTableBody">
                                 <tr>
-                                    <td colspan="4" style="text-align: center; color: var(--text-dim); padding: 20px;">
-                                        Type Kannada text above to see instant word corrections.
+                                    <td colspan="4" style="text-align: center; color: var(--text-tertiary); padding: 30px;">
+                                        Type or paste Kannada text above to see live token corrections.
                                     </td>
                                 </tr>
                             </tbody>
@@ -123,26 +137,26 @@
         <!-- ───────────────────────────────────────────────────────────── -->
         <!-- TAB 2: Document Ingest & Full Pipeline -->
         <!-- ───────────────────────────────────────────────────────────── -->
-        <section id="tabDocument" class="tab-content">
-            <div class="card">
-                <div class="card-header">
-                    <h2><span>📤</span> Ingest & Process Document</h2>
+        <section id="tabDocument" class="tab-pane">
+            <div class="apple-card">
+                <div class="apple-card-header">
+                    <h2 class="apple-card-title">Document Ingestion & OCR Pipeline</h2>
                 </div>
-                <div class="card-body">
+                <div class="apple-card-body">
                     <!-- Dropzone -->
-                    <div id="uploadDropzone" class="upload-dropzone">
-                        <div class="dropzone-icon">📁</div>
-                        <div class="dropzone-title">Click to upload or drag & drop document here</div>
-                        <div class="dropzone-hint">Supports PDF (searchable or scanned), PNG, JPG, JPEG, TIFF, WEBP (Up to 250MB)</div>
-                        <div id="selectedFileName" style="display: none; margin-top: 12px; font-weight: 600; color: #34D399;"></div>
+                    <div id="uploadDropzone" class="apple-dropzone">
+                        <div class="dropzone-icon-circle">↑</div>
+                        <div class="dropzone-heading">Drop your document here</div>
+                        <div class="dropzone-subtext">Supports PDF (searchable or scanned), PNG, JPG, TIFF, WEBP up to 250MB</div>
+                        <div id="selectedFileName" style="display: none; margin-top: 14px; font-weight: 600; color: var(--apple-emerald);"></div>
                         <input type="file" id="docFileInput" style="display: none;" accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif,.bmp,.webp">
                     </div>
 
-                    <!-- OCR Options -->
-                    <div class="options-grid">
-                        <div class="option-group">
-                            <label class="option-label" for="docLangSelect">OCR Language Packs</label>
-                            <select id="docLangSelect" class="form-select">
+                    <!-- Pipeline Options -->
+                    <div class="apple-options-panel">
+                        <div class="control-field">
+                            <label class="control-label" for="docLangSelect">Tesseract Indic Languages</label>
+                            <select id="docLangSelect" class="apple-select">
                                 <option value="kan+eng" selected>Kannada + English (kan+eng)</option>
                                 <option value="kan">Kannada Only (kan)</option>
                                 <option value="san+kan">Sanskrit + Kannada (san+kan)</option>
@@ -151,84 +165,94 @@
                                 <option value="tel+kan">Telugu + Kannada (tel+kan)</option>
                             </select>
                         </div>
-                        <div class="option-group">
-                            <label class="option-label" for="docDpiSelect">Rasterization DPI (Scanned PDFs)</label>
-                            <select id="docDpiSelect" class="form-select">
-                                <option value="300" selected>300 DPI (Recommended / High Quality)</option>
-                                <option value="200">200 DPI (Fast)</option>
-                                <option value="400">400 DPI (Ultra Sharp)</option>
+                        <div class="control-field">
+                            <label class="control-label" for="docDpiSelect">Rasterization Resolution (Scanned PDFs)</label>
+                            <select id="docDpiSelect" class="apple-select">
+                                <option value="300" selected>300 DPI — High Precision</option>
+                                <option value="200">200 DPI — Fast Processing</option>
+                                <option value="400">400 DPI — Ultra Crisp</option>
                             </select>
                         </div>
                     </div>
 
                     <div style="display: flex; justify-content: flex-end;">
-                        <button id="docProcessBtn" class="btn btn-primary" disabled>
-                            <span>🚀</span> Run Ingest, OCR & Autocorrect
+                        <button id="docProcessBtn" class="apple-btn apple-btn-primary" disabled>
+                            Run Ingest & Correction
                         </button>
                     </div>
 
-                    <!-- Progress -->
-                    <div id="docProgressBar" class="progress-bar-container">
-                        <div class="progress-track">
-                            <div class="progress-fill" style="width: 100%;"></div>
+                    <!-- Real-time Progress Tracking Card -->
+                    <div id="docProgressCard" class="live-progress-card">
+                        <div class="progress-header-row">
+                            <span id="docProgressStageBadge" class="progress-stage-badge">Uploading</span>
+                            <span id="docProgressPercent" class="progress-percent-label">0%</span>
                         </div>
-                        <p id="docProgressStatus" style="font-size: 13px; color: var(--text-dim); margin-top: 8px; text-align: center;">
-                            Processing document...
-                        </p>
+                        <div class="progress-track-wrapper">
+                            <div id="docProgressBarFill" class="progress-bar-fill"></div>
+                        </div>
+                        <div class="progress-meta-row">
+                            <span id="docProgressStatusText">Preparing document upload...</span>
+                            <span id="docProgressMetaText">0 / 0 pages</span>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Document Results Card -->
-            <div id="docResultsCard" class="card" style="display: none;">
-                <div class="card-header">
-                    <h2><span>🎉</span> Processing Results</h2>
+
+            <!-- Processing Results -->
+            <div id="docResultsCard" class="apple-card" style="display: none;">
+                <div class="apple-card-header">
+                    <h2 class="apple-card-title">Processing Results</h2>
                     <div style="display: flex; gap: 8px;">
-                        <a id="btnDownloadPdf" class="btn btn-primary btn-sm" href="#" target="_blank">📥 Download Corrected PDF</a>
-                        <a id="btnDownloadTxt" class="btn btn-secondary btn-sm" href="#" target="_blank">📄 Text (.txt)</a>
-                        <a id="btnDownloadJson" class="btn btn-secondary btn-sm" href="#" target="_blank">📊 JSON Report</a>
+                        <a id="btnDownloadPdf" class="apple-btn apple-btn-primary apple-btn-sm" href="#" target="_blank">Download PDF</a>
+                        <a id="btnDownloadTxt" class="apple-btn apple-btn-secondary apple-btn-sm" href="#" target="_blank">Text (.txt)</a>
+                        <a id="btnDownloadJson" class="apple-btn apple-btn-secondary apple-btn-sm" href="#" target="_blank">JSON Report</a>
                     </div>
                 </div>
-                <div class="card-body">
-                    <!-- Stats -->
-                    <div class="stats-bar">
-                        <div class="stat-card">
-                            <span class="stat-label">Pages Processed</span>
-                            <span id="docStatPages" class="stat-value cyan">0</span>
+                <div class="apple-card-body">
+                    <!-- Stats Strip -->
+                    <div class="apple-stats-grid">
+                        <div class="apple-stat-card">
+                            <span class="apple-stat-label">Pages Processed</span>
+                            <span id="docStatPages" class="apple-stat-value cyan">0</span>
                         </div>
-                        <div class="stat-card">
-                            <span class="stat-label">Total Corrections</span>
-                            <span id="docStatFixes" class="stat-value amber">0</span>
+                        <div class="apple-stat-card">
+                            <span class="apple-stat-label">Total Repairs</span>
+                            <span id="docStatFixes" class="apple-stat-value amber">0</span>
                         </div>
-                        <div class="stat-card">
-                            <span class="stat-label">Total Time</span>
-                            <span id="docStatTime" class="stat-value success">0.0s</span>
+                        <div class="apple-stat-card">
+                            <span class="apple-stat-label">Processing Time</span>
+                            <span id="docStatTime" class="apple-stat-value emerald">0.0s</span>
+                        </div>
+                        <div class="apple-stat-card">
+                            <span class="apple-stat-label">Format</span>
+                            <span class="apple-stat-value" style="font-size: 20px;">PDF / Layout</span>
                         </div>
                     </div>
 
-                    <!-- Side-by-side Results -->
-                    <div class="editor-grid">
-                        <div class="editor-box">
-                            <div class="editor-toolbar">
+                    <!-- Side by Side Diff Canvas -->
+                    <div class="editor-canvas-grid">
+                        <div class="editor-pane">
+                            <div class="editor-pane-header">
                                 <span>Raw Extracted OCR Text</span>
                             </div>
-                            <div id="docRawDisplay" class="editor-display"></div>
+                            <div id="docRawDisplay" class="editor-pane-body"></div>
                         </div>
-                        <div class="editor-box">
-                            <div class="editor-toolbar">
-                                <span>Cleaned & Morphologically Corrected Text</span>
+                        <div class="editor-pane">
+                            <div class="editor-pane-header">
+                                <span>Cleaned & Morphologically Corrected</span>
                             </div>
-                            <div id="docCorrectedDisplay" class="editor-display"></div>
+                            <div id="docCorrectedDisplay" class="editor-pane-body"></div>
                         </div>
                     </div>
 
-                    <!-- Corrections Table -->
-                    <h3 style="font-size: 15px; margin: 20px 0 12px; font-weight: 600;">Correction Breakdown</h3>
-                    <div class="table-container">
-                        <table class="corrections-table">
+                    <!-- Breakdown Table -->
+                    <h3 style="font-size: 15px; margin: 24px 0 14px; font-weight: 600;">Correction Breakdown</h3>
+                    <div class="apple-table-wrap">
+                        <table class="apple-table">
                             <thead>
                                 <tr>
-                                    <th style="width: 60px;">#</th>
+                                    <th style="width: 70px;">#</th>
                                     <th>Raw Optical OCR Token</th>
                                     <th>Corrected Kannada Word</th>
                                     <th>Edit Distance</th>
@@ -244,47 +268,64 @@
         <!-- ───────────────────────────────────────────────────────────── -->
         <!-- TAB 3: System Diagnostics -->
         <!-- ───────────────────────────────────────────────────────────── -->
-        <section id="tabDiagnostics" class="tab-content">
-            <div class="card">
-                <div class="card-header">
-                    <h2><span>⚙️</span> Engine Architecture & Diagnostic Info</h2>
+        <section id="tabDiagnostics" class="tab-pane">
+            <div class="apple-card">
+                <div class="apple-card-header">
+                    <h2 class="apple-card-title">Engine Architecture & Diagnostics</h2>
                 </div>
-                <div class="card-body">
-                    <div class="stats-bar">
-                        <div class="stat-card">
-                            <span class="stat-label">Tesseract OCR Status</span>
-                            <span id="diagTessStatus" class="stat-value">Checking...</span>
+                <div class="apple-card-body">
+                    <div class="apple-stats-grid">
+                        <div class="apple-stat-card">
+                            <span class="apple-stat-label">Tesseract OCR Status</span>
+                            <span id="diagTessStatus" class="apple-stat-value">Checking...</span>
                         </div>
-                        <div class="stat-card">
-                            <span class="stat-label">Hunspell kn_IN Dictionary</span>
-                            <span id="diagDictCount" class="stat-value cyan">0</span>
+                        <div class="apple-stat-card">
+                            <span class="apple-stat-label">Hunspell Lexicon Size</span>
+                            <span id="diagDictCount" class="apple-stat-value cyan">0</span>
+                        </div>
+                        <div class="apple-stat-card">
+                            <span class="apple-stat-label">Maximum Upload Size</span>
+                            <span class="apple-stat-value">250 MB</span>
+                        </div>
+                        <div class="apple-stat-card">
+                            <span class="apple-stat-label">Typography Model</span>
+                            <span class="apple-stat-value emerald">Noto Sans</span>
                         </div>
                     </div>
 
                     <div style="margin-top: 24px;">
-                        <h3 style="font-size: 14px; font-weight: 600; margin-bottom: 10px; color: var(--text-muted);">
-                            Installed Tesseract Languages
+                        <h3 style="font-size: 13px; font-weight: 600; margin-bottom: 12px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em;">
+                            Supported Indic Languages
                         </h3>
                         <div id="diagLangTags" style="display: flex; flex-wrap: wrap; gap: 8px;">
-                            <span class="btn btn-secondary btn-sm">kan</span>
-                            <span class="btn btn-secondary btn-sm">eng</span>
+                            <span class="apple-btn apple-btn-secondary apple-btn-sm">kan (Kannada)</span>
+                            <span class="apple-btn apple-btn-secondary apple-btn-sm">eng (English)</span>
+                            <span class="apple-btn apple-btn-secondary apple-btn-sm">san (Sanskrit)</span>
+                            <span class="apple-btn apple-btn-secondary apple-btn-sm">hin (Hindi)</span>
+                            <span class="apple-btn apple-btn-secondary apple-btn-sm">tam (Tamil)</span>
+                            <span class="apple-btn apple-btn-secondary apple-btn-sm">tel (Telugu)</span>
                         </div>
                     </div>
 
-                    <div style="margin-top: 32px; padding: 20px; background: rgba(15, 23, 42, 0.4); border-radius: var(--radius-lg); border: 1px solid var(--border-subtle);">
-                        <h3 style="font-size: 15px; font-weight: 600; margin-bottom: 10px;">Pipeline Pipeline Stack</h3>
-                        <ul style="list-style: square inside; font-size: 14px; color: var(--text-muted); line-height: 1.8;">
-                            <li><strong>Ingestion:</strong> PyMuPDF (fitz) for searchable PDFs + pdf2image with Poppler for scanned docs.</li>
-                            <li><strong>OCR Engine:</strong> Tesseract OCR with multi-language Indic packs (`kan+eng`, `san`, `hin`, `tam`, `tel`).</li>
-                            <li><strong>Normalization:</strong> Indic Virama U+0CCD restoration, double consonant collapse, and short/long vowel repairs.</li>
-                            <li><strong>Morphology:</strong> Agglutinative Kannada suffix stripping, stem analysis, and Sandhi joining.</li>
-                            <li><strong>Scoring:</strong> Weighted Levenshtein distance with Indic confusion pairs + N-gram context ranking.</li>
-                            <li><strong>Export:</strong> FPDF2 layout-preserved PDF with Noto Sans Kannada Unicode TTF + JSON metadata.</li>
+                    <div style="margin-top: 32px; padding: 24px; background: rgba(20, 20, 24, 0.6); border-radius: var(--radius-lg); border: 1px solid var(--apple-border-subtle);">
+                        <h3 style="font-size: 15px; font-weight: 600; margin-bottom: 12px;">Architecture Specifications</h3>
+                        <ul style="list-style: square inside; font-size: 13.5px; color: var(--text-secondary); line-height: 1.9;">
+                            <li><strong>Ingestion:</strong> Multi-mode parsing — PyMuPDF for digital vector text, pdf2image (Poppler) for scanned sheets.</li>
+                            <li><strong>OCR Subsystem:</strong> Tesseract LSTM neural model configured for Indic conjunct glyphs.</li>
+                            <li><strong>Normalization:</strong> Indic Virama U+0CCD restoration, consonant doubling repairs, and short/long vowel normalizations.</li>
+                            <li><strong>Morphology:</strong> Sandhi engine with longest-match suffix decomposition against Hunspell kn_IN rules.</li>
+                            <li><strong>Scoring:</strong> Weighted Levenshtein penalty matrix with Indic optical confusion pairings + N-gram context.</li>
+                            <li><strong>Export:</strong> FPDF2 layout-preserving PDF with embedded Noto Sans Kannada Unicode TTF font.</li>
                         </ul>
                     </div>
                 </div>
             </div>
         </section>
+
+        <!-- Apple Footer -->
+        <footer class="apple-footer">
+            <p>ಕನ್ನಡ OCR & ಸ್ವಯಂ ತಿದ್ದುಪಡಿ — Precision Indic Document Pipeline & Autocorrect System</p>
+        </footer>
     </div>
 
     <script src="/static/js/app.js"></script>

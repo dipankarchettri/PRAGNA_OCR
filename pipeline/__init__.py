@@ -86,13 +86,23 @@ def process_document(
     # Case 1: PDF Document
     # ─────────────────────────────────────────────────────────
     if is_pdf_file(input_path):
+        if progress_callback:
+            progress_callback({'stage': 'inspecting', 'message': 'Analyzing PDF document...', 'percent': 5})
+
         pdf_info = inspect_pdf(input_path)
         is_searchable = pdf_info['is_searchable']
         page_count = pdf_info['page_count']
 
         if is_searchable:
+            if progress_callback:
+                progress_callback({'stage': 'extracting', 'message': f'Extracting digital text from {page_count} pages...', 'percent': 30})
+
             # Digital Searchable PDF -> PyMuPDF Layout Extraction
             layout_lines = extract_searchable_pdf_layout(input_path)
+            
+            if progress_callback:
+                progress_callback({'stage': 'correcting', 'message': 'Applying morphological cleaning and Sandhi rules...', 'percent': 70})
+
             corrected_lines, corrections = correct_layout_lines(layout_lines)
             all_layout_lines.extend(corrected_lines)
             all_corrections.extend(corrections)
@@ -118,15 +128,26 @@ def process_document(
             if not is_tesseract_available():
                 raise RuntimeError("Tesseract OCR is required for scanned PDFs, but is not installed in PATH.")
 
+            if progress_callback:
+                progress_callback({'stage': 'rasterizing', 'message': f'Rasterizing {page_count} pages at {dpi} DPI...', 'percent': 15})
+
             images = rasterize_pdf_to_images(input_path, dpi=dpi)
+            total_pages_count = len(images)
             img_dir = os.path.join(output_dir, 'images')
             if save_images:
                 os.makedirs(img_dir, exist_ok=True)
 
             for i, img in enumerate(images):
                 page_num = i + 1
+                ocr_pct = int(15 + ((i + 1) / total_pages_count) * 70)
                 if progress_callback:
-                    progress_callback(page_num, len(images))
+                    progress_callback({
+                        'stage': 'ocr',
+                        'current_page': page_num,
+                        'total_pages': total_pages_count,
+                        'percent': ocr_pct,
+                        'message': f'OCR Processing Page {page_num} of {total_pages_count}...'
+                    })
 
                 if save_images:
                     img_path = os.path.join(img_dir, f"page_{page_num:03d}.png")
@@ -149,6 +170,7 @@ def process_document(
                     'has_errors': len(page_corrections) > 0,
                     'corrections': page_corrections
                 })
+
 
     # ─────────────────────────────────────────────────────────
     # Case 2: Image Document (PNG, JPG, TIFF, WEBP, etc.)
@@ -187,6 +209,9 @@ def process_document(
     # ─────────────────────────────────────────────────────────
     # Export Outputs
     # ─────────────────────────────────────────────────────────
+    if progress_callback:
+        progress_callback({'stage': 'exporting', 'message': 'Generating layout-preserved PDF and reports...', 'percent': 92})
+
     full_raw_text = '\n\n'.join(p['raw_text'] for p in pages_result)
     full_corrected_text = '\n\n'.join(p['corrected_text'] for p in pages_result)
 
@@ -228,6 +253,10 @@ def process_document(
 
     json_report_path = os.path.join(output_dir, f"{stem}_report.json")
     export_json_report(report_data, json_report_path)
+
+    if progress_callback:
+        progress_callback({'stage': 'complete', 'message': 'Document processing complete!', 'percent': 100})
+
 
     return {
         'success': True,
