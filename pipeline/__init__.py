@@ -59,16 +59,23 @@ def process_text_input(
         result = proofread_kannada_ai(text, model=ai_model)
     elif engine_mode == 'hybrid':
         # Fast algorithmic pre-clean then AI contextual refinement
+        algo_res = correct_text(text)
         if is_ollama_running():
-            algo_res = correct_text(text)
             ai_res = proofread_kannada_ai(algo_res['corrected'], model=ai_model)
-            # Merge corrections
-            result = ai_res
-            result['original'] = text
-            result['engine_mode'] = 'hybrid'
+            if ai_res.get('ai_available', True):
+                from .correction.ai_proofreader import compute_token_diffs
+                ai_res['corrections'] = compute_token_diffs(text, ai_res['corrected'])
+                ai_res['original'] = text
+                ai_res['total_corrections'] = len(ai_res['corrections'])
+                ai_res['accuracy_rate'] = round(max(0.0, min(100.0, 100.0 - (len(ai_res['corrections']) / max(1, algo_res.get('total_words', 1)) * 100))), 1)
+                ai_res['engine_mode'] = 'hybrid'
+                result = ai_res
+            else:
+                algo_res['engine_mode'] = 'hybrid (algo fallback)'
+                result = algo_res
         else:
-            result = correct_text(text)
-            result['engine_mode'] = 'algorithmic (ai offline)'
+            algo_res['engine_mode'] = 'hybrid (algo fallback)'
+            result = algo_res
     else:
         result = correct_text(text)
         result['engine_mode'] = 'algorithmic'

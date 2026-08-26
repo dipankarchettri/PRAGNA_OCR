@@ -54,7 +54,7 @@ def query_ollama_chat(
     model: str = DEFAULT_MODEL,
     system_prompt: str = SYSTEM_PROMPT,
     temperature: float = 0.1,
-    timeout_sec: float = 45.0
+    timeout_sec: float = 120.0
 ) -> str:
     """
     Send prompt to local Ollama chat/generate API and return text response.
@@ -68,7 +68,8 @@ def query_ollama_chat(
         "options": {
             "temperature": temperature,
             "top_p": 0.9,
-            "num_predict": 2048,
+            "num_predict": 1024,
+            "num_thread": 8
         }
     }
 
@@ -167,25 +168,40 @@ def proofread_kannada_ai(
         return res
 
     try:
-        # For multi-paragraph texts, process paragraph by paragraph to preserve line structure
-        paragraphs = text.split('\n\n')
-        corrected_paragraphs = []
+        # Smart line/sentence chunking to keep CPU inference fast (<3s per chunk)
+        lines = text.split('\n')
+        chunks = []
+        curr = []
+        curr_words = 0
 
-        for p in paragraphs:
-            p_strip = p.strip()
-            if not p_strip:
-                corrected_paragraphs.append('')
+        for line in lines:
+            w_count = len(line.split())
+            if curr_words + w_count > 35 and curr:
+                chunks.append('\n'.join(curr))
+                curr = [line]
+                curr_words = w_count
+            else:
+                curr.append(line)
+                curr_words += w_count
+        if curr:
+            chunks.append('\n'.join(curr))
+
+        corrected_chunks = []
+        for ch in chunks:
+            ch_strip = ch.strip()
+            if not ch_strip:
+                corrected_chunks.append('')
                 continue
 
-            user_prompt = f"Correct the OCR errors in the following Kannada text:\n\n{p_strip}"
-            corr_p = query_ollama_chat(
+            user_prompt = f"Correct the OCR errors in the following Kannada text:\n\n{ch_strip}"
+            corr_ch = query_ollama_chat(
                 prompt=user_prompt,
                 model=chosen_model,
                 temperature=temperature
             )
-            corrected_paragraphs.append(corr_p if corr_p else p_strip)
+            corrected_chunks.append(corr_ch if corr_ch else ch_strip)
 
-        final_corrected = "\n\n".join(corrected_paragraphs)
+        final_corrected = "\n".join(corrected_chunks)
         diffs = compute_token_diffs(text, final_corrected)
         words = re.findall(r'\S+', text)
         total_words = len(words)
