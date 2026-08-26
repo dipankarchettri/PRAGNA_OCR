@@ -110,23 +110,26 @@ def suggest_kannada_word(word: str, prev_word: Optional[str] = None, next_word: 
     if is_compound_word(word, dictionary):
         return word, 0.0, 'none'
 
-    # 5. Targeted Rule-based OCR Repairs (Optical confusion, Halant/Virama, rephas)
-    repaired = apply_ocr_repairs(word, dictionary)
-    if repaired != word:
+    # 5. Targeted Rule-based OCR Repairs & Spelling Normalization
+    repaired, rep_type = apply_ocr_repairs(word, dictionary)
+    if repaired != word and rep_type != 'none':
         # Check if repaired word also has a morphological suffix normalization
         rep_root, rep_suf = decompose_word(repaired, dictionary)
         if rep_root is not None:
             if rep_suf == 'ಿಸುತ್ತದೆ' and repaired.endswith(('ುತದೆ', 'ಸುತದೆ')):
-                return join_root_suffix(rep_root, rep_suf), 0.5, 'hybrid' # Both OCR repair + Word correction
-            return join_root_suffix(rep_root, rep_suf), 0.5, 'ocr_repair'
+                if rep_type == 'ocr_repair':
+                    return join_root_suffix(rep_root, rep_suf), 0.5, 'hybrid' # Both OCR repair + Word correction
+                return join_root_suffix(rep_root, rep_suf), 0.5, 'word_correction'
+            return join_root_suffix(rep_root, rep_suf), 0.5, rep_type
 
         if repaired in dictionary or is_compound_word(repaired, dictionary):
-            return repaired, 0.5, 'ocr_repair'
+            return repaired, 0.5, rep_type
 
-        return repaired, 0.5, 'ocr_repair'
+        return repaired, 0.5, rep_type
 
     # 6. Default Safe Fallback: Preserve original OCR text without corrupting
     return word, 0.0, 'none'
+
 
 
 def correct_text(text: str) -> Dict[str, Any]:

@@ -7,7 +7,7 @@ Combines: Unicode Glitch Cleaning -> Optical Glyph Normalization -> Dictionary-G
 import re
 from typing import Set, Optional, Tuple, List
 
-# 1. Targeted OCR Optical Character Confusions (Visual similarity in print/scan across all Kannada documents)
+# 1. Targeted OCR Optical Character Confusions (Visual similarity in print/scan across all Kannada documents) -> Blue
 OPTICAL_CONFUSIONS: List[Tuple[str, str]] = [
     # Optical confusion: ಪ (pa) misread for ಜ (ja) in scheme/plans
     (r'ಯೋಪನೆ', 'ಯೋಜನೆ'),
@@ -46,11 +46,16 @@ OPTICAL_CONFUSIONS: List[Tuple[str, str]] = [
     (r'ಆಳೆಯ', 'ಆಕೆಯ'),
     # Optical confusion: ವ್ಮ (vma) misread for ಮ್ಮ (mma) in our
     (r'ನವ್ಮ', 'ನಮ್ಮ'),
-    # Glitched duplicate ottus or endings
+]
+
+# 2. Word / Spelling / Suffix Typo Repairs -> Green
+WORD_SPELLING_REPAIRS: List[Tuple[str, str]] = [
     (r'ಚಿನ್ನದಂತಹವಳ್ಳು', 'ಚಿನ್ನದಂತಹವಳು'),
     (r'ನಿಂತುಬಿಟ್ಟತ್ತು', 'ನಿಂತುಬಿಟ್ಟಿತ್ತು'),
     (r'ಸಂಯುವವರೆವಿಗೂ', 'ಸಾಯುವವರೆವಿಗೂ'),
+    (r'ಹಾಕೆ\b', 'ಯಾಕೆ'),
 ]
+
 
 
 # 2. Safe, high-precision Archaic Repha normalizations (e.g. ಕನಾ೯ಟಕ -> ಕರ್ನಾಟಕ, ಕತ೯ವ್ಯ -> ಕರ್ತವ್ಯ)
@@ -111,35 +116,47 @@ def clean_unicode_glitches(text: str) -> str:
     return t
 
 
-def apply_ocr_repairs(word: str, dictionary: Optional[Set[str]] = None) -> str:
+def apply_ocr_repairs(word: str, dictionary: Optional[Set[str]] = None) -> Tuple[str, str]:
     """
     Apply safe, rule-based Indic OCR repairs to a word token.
-    Never corrupts valid dictionary words or syllables.
+    Returns: (repaired_word, repair_type) where repair_type is 'ocr_repair' or 'word_correction' or 'none'
     """
-    w = clean_unicode_glitches(word)
+    cleaned = clean_unicode_glitches(word)
+    w = cleaned
 
-    # 1. Target exact vowel prefixes
+    # 1. Word / Spelling / Suffix Typo Repairs (Green)
+    for pat, rep in WORD_SPELLING_REPAIRS:
+        if re.search(pat, w):
+            cand = re.sub(pat, rep, w)
+            return cand, 'word_correction'
+
     for old_v, new_v in VOWEL_LONG_MAP.items():
         if w == old_v or w.startswith(old_v):
-            w = new_v + w[len(old_v):]
-            break
+            cand = new_v + w[len(old_v):]
+            return cand, 'word_correction'
 
-    # 2. Apply safe pattern normalizations
-    for pat, rep in SAFE_OCR_REPAIRS:
-        w = re.sub(pat, rep, w)
-
-    # 3. Apply targeted optical character confusions if dictionary verified
+    # 2. Targeted Optical Character Confusions (Blue)
     for pat, rep in OPTICAL_CONFUSIONS:
         if re.search(pat, w):
             cand = re.sub(pat, rep, w)
             if dictionary:
                 if cand in dictionary:
-                    return cand
+                    return cand, 'ocr_repair'
                 # Check stem if suffix attached
                 from .morphology import decompose_word, is_compound_word
                 if decompose_word(cand, dictionary)[0] is not None or is_compound_word(cand, dictionary):
-                    return cand
+                    return cand, 'ocr_repair'
             else:
-                return cand
+                return cand, 'ocr_repair'
 
-    return w
+    # 3. Safe Repha / Halant Repairs (Blue)
+    for pat, rep in SAFE_OCR_REPAIRS:
+        if re.search(pat, w):
+            cand = re.sub(pat, rep, w)
+            return cand, 'ocr_repair'
+
+    if cleaned != word:
+        return cleaned, 'ocr_repair'
+
+    return word, 'none'
+
