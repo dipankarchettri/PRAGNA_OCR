@@ -7,7 +7,7 @@ Combines: Unicode Glitch Cleaning -> Optical Glyph Normalization -> Dictionary-G
 import re
 from typing import Set, Optional, Tuple, List
 
-# 1. Targeted OCR Optical Character Confusions (Visual similarity in print/scan)
+# 1. Targeted OCR Optical Character Confusions (Visual similarity in print/scan across all Kannada documents)
 OPTICAL_CONFUSIONS: List[Tuple[str, str]] = [
     # Optical confusion: ಪ (pa) misread for ಜ (ja) in scheme/plans
     (r'ಯೋಪನೆ', 'ಯೋಜನೆ'),
@@ -27,7 +27,31 @@ OPTICAL_CONFUSIONS: List[Tuple[str, str]] = [
     # Optical confusion in verb sallisuttene
     (r'ಸಥ್ಸಿಸು', 'ಸಲ್ಲಿಸು'),
     (r'ಸಥ್ಸ', 'ಸಲ್ಲಿಸ'),
+    # Optical confusion: Initial long ಓ (O) misread for short ಒ (o)
+    (r'^ಓಂದು\b', 'ಒಂದು'),
+    # Optical confusion: ಂಜ (nja) misread for ಂದ (nda) in father
+    (r'ತಂಜೆ', 'ತಂದೆ'),
+    # Optical confusion: ಥ (tha) misread for ಫ (pha) in coffee
+    (r'ಕಾಥಿ', 'ಕಾಫಿ'),
+    # Optical confusion: ಸ್ಮ (sma) misread for ಷ್ಮೆ (shma) in silk
+    (r'ರೇಸ್ಮೆ', 'ರೇಷ್ಮೆ'),
+    (r'ರೆಸ್ಮೆ', 'ರೇಷ್ಮೆ'),
+    # Optical confusion: ಹ (ha) misread for ಷ (sha) in criticize/blame
+    (r'ದೂಹಿಸು', 'ದೂಷಿಸು'),
+    (r'ದೂಹಿಸಿದ', 'ದೂಷಿಸಿದ'),
+    # Optical confusion: ನ (na) misread for ವ (va) in pronouns
+    (r'^ಇನಳಿ', 'ಇವಳಿ'),
+    (r'^ಅನಳಿ', 'ಅವಳಿ'),
+    # Optical confusion: ಳ (la) misread for ಕ (ka) in pronoun aake
+    (r'ಆಳೆಯ', 'ಆಕೆಯ'),
+    # Optical confusion: ವ್ಮ (vma) misread for ಮ್ಮ (mma) in our
+    (r'ನವ್ಮ', 'ನಮ್ಮ'),
+    # Glitched duplicate ottus or endings
+    (r'ಚಿನ್ನದಂತಹವಳ್ಳು', 'ಚಿನ್ನದಂತಹವಳು'),
+    (r'ನಿಂತುಬಿಟ್ಟತ್ತು', 'ನಿಂತುಬಿಟ್ಟಿತ್ತು'),
+    (r'ಸಂಯುವವರೆವಿಗೂ', 'ಸಾಯುವವರೆವಿಗೂ'),
 ]
+
 
 # 2. Safe, high-precision Archaic Repha normalizations (e.g. ಕನಾ೯ಟಕ -> ಕರ್ನಾಟಕ, ಕತ೯ವ್ಯ -> ಕರ್ತವ್ಯ)
 SAFE_OCR_REPAIRS = [

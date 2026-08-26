@@ -13,7 +13,8 @@ from .ocr_repairs import apply_ocr_repairs, clean_unicode_glitches
 from .ngram import train_model, score_candidate
 
 # Strict protected tokens that should never be fused or altered
-PROTECTED_TOKENS = {'ಶ್ರೀ', 'ಡಾ', 'ಪ್ರೊ', 'ಆ', 'ಈ', 'ಏ', 'ಮತ್ತು', 'ಹಾಗೂ', 'ಅಥವಾ', 'ಎಂದು', 'ಎಂಬ', 'ಒಂದು', 'ಆಗಿದೆ', 'ಆಗಿದ್ದಾರೆ', 'ಆಗುವುದು', 'ಆಗಿದೆ.', 'ಇದೆ', 'ಇದು'}
+PROTECTED_TOKENS = {'ಶ್ರೀ', 'ಡಾ', 'ಪ್ರೊ', 'ಆ', 'ಈ', 'ಏ', 'ಮತ್ತು', 'ಹಾಗೂ', 'ಅಥವಾ', 'ಎಂದು', 'ಎಂಬ', 'ಒಂದು', 'ಆಗಿದೆ', 'ಆಗಿದ್ದಾರೆ', 'ಆಗುವುದು', 'ಆಗಿದೆ.', 'ಇದೆ', 'ಇದು', 'ಅಲ್ಲ', 'ಇಲ್ಲ'}
+
 
 
 
