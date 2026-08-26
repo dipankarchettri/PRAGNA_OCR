@@ -48,11 +48,12 @@ def join_root_suffix(root: str, suf: str) -> str:
     if not suf:
         return root
 
-    # Verb sandhi: root ending in 'ಿಸು' or 'ು' + verbal suffix
-    if root.endswith('ಿಸು') and (suf in ('ಿಸುತ್ತದೆ', 'ುತ್ತದೆ', 'ುತದೆ', 'ಸುತದೆ')):
+    # Verb sandhi: root ending in 'ಿಸು', 'ಿಸಿ', or 'ು' + verbal suffix
+    if (root.endswith('ಿಸು') or root.endswith('ಿಸಿ')) and (suf in ('ಿಸುತ್ತದೆ', 'ುತ್ತದೆ', 'ುತದೆ', 'ಸುತದೆ')):
         return root[:-3] + 'ಿಸುತ್ತದೆ'
     elif root.endswith('ು') and (suf in ('ಿಸುತ್ತದೆ', 'ುತ್ತದೆ', 'ುತದೆ', 'ಸುತದೆ')):
         return root[:-1] + 'ಿಸುತ್ತದೆ'
+
 
     # Noun sandhi: root ending in ು + ಗೆ -> ಿಗೆ (e.g. ಮನಸ್ಸು + ಗೆ -> ಮನಸ್ಸಿಗೆ)
     if root.endswith('ು') and suf == 'ಗೆ':
@@ -100,3 +101,37 @@ def decompose_word(word: str, dictionary: Set[str]) -> Tuple[Optional[str], Opti
                     return st, correct_suf
 
     return None, None
+
+
+def is_compound_word(word: str, dictionary: Set[str]) -> bool:
+    """
+    Check if word is a valid Kannada compound (Samasa) formed by joining substantive dictionary stems.
+    """
+    if len(word) < 4:
+        return False
+
+    # Common prefixes in Kannada
+    kannada_prefixes = ['ಮರು', 'ಅನು', 'ಪ್ರತಿ', 'ಉಪ', 'ಸಹ', 'ಅಸಹ', 'ಸು', 'ದುರ್', 'ವಿ', 'ಮಹಾ', 'ಏಕ', 'ಸರ್ವ', 'ಆದಿ', 'ಅಂತರ್']
+    for pfx in kannada_prefixes:
+        if word.startswith(pfx) and len(word) > len(pfx) + 1:
+            rest = word[len(pfx):]
+            if rest in dictionary:
+                return True
+
+    # Split into 2 substantive components (neither can be a pure suffix or < 2 chars)
+    for i in range(2, len(word) - 2):
+        part1 = word[:i]
+        part2 = word[i:]
+
+        if part1 in SUFFIXES or part2 in SUFFIXES:
+            continue
+
+        if part1 in dictionary and part2 in dictionary:
+            return True
+
+        if (part1 + 'ು' in dictionary or part1 + 'ಾ' in dictionary or part1 + 'ಿ' in dictionary) and part2 in dictionary:
+            return True
+
+    return False
+
+

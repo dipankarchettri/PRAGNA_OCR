@@ -1,23 +1,24 @@
 """
 Main Kannada Autocorrect & Post-OCR Correction Engine
-Combines: OCR Rule Repairs -> Morphological Decomposition -> Weighted Levenshtein -> N-Gram Ranking
+Combines: OCR Rule Repairs -> Morphological Decomposition -> Compound Word (Samasa) Verification -> Safe Conservative Edit Distance
 """
 
 from typing import Dict, List, Tuple, Any, Optional
 from .dictionary import get_dictionary, get_word_list, load_dictionary
 from .tokenizer import tokenize, reconstruct
 from .edit_distance import weighted_edit_distance
-from .morphology import decompose_word, join_root_suffix, SUFFIXES
+from .morphology import decompose_word, join_root_suffix, is_compound_word, SUFFIXES
 from .ocr_repairs import apply_ocr_repairs
 from .ngram import train_model, score_candidate
 
-MAX_EDIT_DIST = 2.5
+# Strict maximum edit distance for conservative substitution
+MAX_EDIT_DIST = 1.0
 
 
 def suggest_kannada_word(word: str, prev_word: Optional[str] = None, next_word: Optional[str] = None) -> Tuple[str, float]:
     """
     Find best correction suggestion for a single Kannada word.
-    Returns (suggested_word, confidence/edit_distance).
+    Guaranteed not to corrupt valid proper nouns, compounds, or initials.
     """
     dictionary = get_dictionary()
     word_list = get_word_list()
@@ -25,25 +26,37 @@ def suggest_kannada_word(word: str, prev_word: Optional[str] = None, next_word: 
     if not dictionary:
         return word, 0.0
 
-    # 1. Exact match
+    # 1. Single character or short initials (e.g. ಶ್ರೀ, ಡಾ, ಎ, ವಿ, ಎಸ್) - never corrupt
+    if len(word) <= 1:
+        return word, 0.0
+
+    # 2. Exact match in dictionary
     if word in dictionary:
         return word, 0.0
 
-    # 2. Rule-based OCR Repairs & Direct Morphological Check
-    repaired = apply_ocr_repairs(word, dictionary)
-    if repaired in dictionary:
-        return repaired, 0.5
-
-    root, suf = decompose_word(repaired, dictionary)
-    if root is not None:
-        return join_root_suffix(root, suf), 0.5
-
-    # 3. Direct morphological decomposition on original
+    # 3. Direct morphological decomposition (root + valid Kannada suffix)
     root, suf = decompose_word(word, dictionary)
     if root is not None:
-        return join_root_suffix(root, suf), 0.5
+        joined = join_root_suffix(root, suf)
+        if joined != word:
+            return joined, 0.5
+        return word, 0.0
 
-    # 4. Candidate Search via Stem Decomposition & Weighted Distance
+    # 4. Compound Word (Samasa) validation (e.g., ಸಂತಕವಿ, ಸಹಕಾರ, ಕನಕದಾಸರು, ಮರುಓದಿಗೆ)
+    if is_compound_word(word, dictionary):
+        return word, 0.0
+
+    # 5. Rule-based OCR Repairs (Missing Halant/Virama, vowel sign optical errors)
+    repaired = apply_ocr_repairs(word, dictionary)
+    if repaired != word:
+        if repaired in dictionary or is_compound_word(repaired, dictionary):
+            return repaired, 0.5
+        rep_root, rep_suf = decompose_word(repaired, dictionary)
+        if rep_root is not None:
+            return join_root_suffix(rep_root, rep_suf), 0.5
+
+
+    # 6. Conservative Candidate Search for High-Confidence Typos Only (dist <= 1.0)
     best_candidate = None
     best_dist = 999.0
     best_score = -999.0
@@ -51,25 +64,30 @@ def suggest_kannada_word(word: str, prev_word: Optional[str] = None, next_word: 
     for suf_try in [''] + SUFFIXES:
         if repaired.endswith(suf_try) and len(repaired) >= len(suf_try):
             stem = repaired[:-len(suf_try)] if suf_try else repaired
-            if not stem:
+            if len(stem) < 2:
                 continue
 
             for dict_word in word_list:
+                # Disallow matching very short words to long words or vice-versa
+                if abs(len(stem) - len(dict_word)) > 1:
+                    continue
+
                 d = weighted_edit_distance(stem, dict_word, max_dist=MAX_EDIT_DIST)
                 if d <= MAX_EDIT_DIST:
                     cand = join_root_suffix(dict_word, suf_try)
                     lm_score = score_candidate(cand, prev_word, next_word)
-                    
-                    # Preference based on distance and language model
+
                     if d < best_dist or (abs(d - best_dist) < 0.01 and lm_score > best_score):
                         best_dist = d
                         best_score = lm_score
                         best_candidate = cand
 
+    # Only accept candidate if it's within strict distance
     if best_candidate and best_dist <= MAX_EDIT_DIST:
         return best_candidate, best_dist
 
-    return repaired, 1.0
+    # If no confident match found, preserve the original OCR word (Safe Fail)
+    return word, 0.0
 
 
 def correct_text(text: str) -> Dict[str, Any]:
@@ -89,11 +107,12 @@ def correct_text(text: str) -> Dict[str, Any]:
     kannada_count = len(kannada_tokens)
 
     for i, token in enumerate(tokens):
+        # Only check Kannada words (leave numbers, punctuation, and English strictly untouched)
         if token['type'] != 'kannada':
             continue
 
         orig_word = token['value']
-        
+
         # Context extraction
         prev_kannada = None
         next_kannada = None
