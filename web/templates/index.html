@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="kn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ಕನ್ನಡ OCR & ಸ್ವಯಂ ತಿದ್ದುಪಡಿ — Kannada OCR & Autocorrect Pipeline</title>
+    <meta name="description" content="End-to-end Indic OCR and Morphological Autocorrect Pipeline for Kannada documents, PDFs, and text.">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="brand-section">
+                <div class="brand-logo">ಕ</div>
+                <div class="brand-title">
+                    <h1>ಕನ್ನಡ OCR & ಸ್ವಯಂ ತಿದ್ದುಪಡಿ</h1>
+                    <p>Unified Kannada OCR Ingestion, Morphological Cleaning & Layout-Preserved Export</p>
+                </div>
+            </div>
+            <div id="headerStatusBadge" class="header-status-badge">
+                <span class="status-dot"></span> Checking System...
+            </div>
+        </header>
+
+        <!-- Navigation Tabs -->
+        <nav class="nav-tabs" role="tablist">
+            <button class="tab-btn active" data-tab="tabLive" id="tabBtnLive">
+                <span>📝</span> Live Text Correction
+            </button>
+            <button class="tab-btn" data-tab="tabDocument" id="tabBtnDoc">
+                <span>📄</span> Document OCR & Pipeline
+            </button>
+            <button class="tab-btn" data-tab="tabDiagnostics" id="tabBtnDiag">
+                <span>⚙️</span> Engine Status
+            </button>
+        </nav>
+
+        <!-- ───────────────────────────────────────────────────────────── -->
+        <!-- TAB 1: Live Interactive Autocorrect -->
+        <!-- ───────────────────────────────────────────────────────────── -->
+        <main id="tabLive" class="tab-content active">
+            <!-- Stats -->
+            <div class="stats-bar">
+                <div class="stat-card">
+                    <span class="stat-label">Total Words</span>
+                    <span id="liveStatWords" class="stat-value cyan">0</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-label">Errors Corrected</span>
+                    <span id="liveStatFixes" class="stat-value amber">0</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-label">Accuracy Rate</span>
+                    <span id="liveStatAccuracy" class="stat-value success">100%</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-label">Latency</span>
+                    <span id="liveStatLatency" class="stat-value">0.00s</span>
+                </div>
+            </div>
+
+            <!-- Split Editor -->
+            <div class="editor-grid">
+                <!-- Input Box -->
+                <div class="editor-box">
+                    <div class="editor-toolbar">
+                        <span>Original / OCR Text (Raw)</span>
+                        <div style="display: flex; gap: 8px;">
+                            <button id="liveLoadSampleBtn" class="btn btn-secondary btn-sm">Sample Text</button>
+                            <button id="liveClearBtn" class="btn btn-secondary btn-sm">Clear</button>
+                        </div>
+                    </div>
+                    <textarea 
+                        id="liveRawInput" 
+                        class="editor-textarea" 
+                        placeholder="ಇಲ್ಲಿ ಕನ್ನಡ ಪಠ್ಯವನ್ನು ಟೈಪ್ ಮಾಡಿ ಅಥವಾ ಅಂಟಿಸಿ (Type or paste Kannada text here)..."
+                        spellcheck="false"
+                    ></textarea>
+                </div>
+
+                <!-- Corrected Box -->
+                <div class="editor-box">
+                    <div class="editor-toolbar">
+                        <span>Corrected Output (Cleaned)</span>
+                        <button id="liveCopyBtn" class="btn btn-secondary btn-sm">📋 Copy</button>
+                    </div>
+                    <div id="liveCorrectedDisplay" class="editor-display">
+                        <span style="color: var(--text-dim);">Corrected text will appear here in real time...</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Detailed Corrections Card -->
+            <div class="card">
+                <div class="card-header">
+                    <h2><span>🔍</span> Word Correction Log</h2>
+                </div>
+                <div class="card-body">
+                    <div class="table-container">
+                        <table class="corrections-table">
+                            <thead>
+                                <tr>
+                                    <th style="width: 60px;">#</th>
+                                    <th>Original Token</th>
+                                    <th>Corrected Word</th>
+                                    <th>Edit Cost</th>
+                                </tr>
+                            </thead>
+                            <tbody id="liveCorrectionsTableBody">
+                                <tr>
+                                    <td colspan="4" style="text-align: center; color: var(--text-dim); padding: 20px;">
+                                        Type Kannada text above to see instant word corrections.
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- ───────────────────────────────────────────────────────────── -->
+        <!-- TAB 2: Document Ingest & Full Pipeline -->
+        <!-- ───────────────────────────────────────────────────────────── -->
+        <section id="tabDocument" class="tab-content">
+            <div class="card">
+                <div class="card-header">
+                    <h2><span>📤</span> Ingest & Process Document</h2>
+                </div>
+                <div class="card-body">
+                    <!-- Dropzone -->
+                    <div id="uploadDropzone" class="upload-dropzone">
+                        <div class="dropzone-icon">📁</div>
+                        <div class="dropzone-title">Click to upload or drag & drop document here</div>
+                        <div class="dropzone-hint">Supports PDF (searchable or scanned), PNG, JPG, JPEG, TIFF, WEBP (Up to 250MB)</div>
+                        <div id="selectedFileName" style="display: none; margin-top: 12px; font-weight: 600; color: #34D399;"></div>
+                        <input type="file" id="docFileInput" style="display: none;" accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif,.bmp,.webp">
+                    </div>
+
+                    <!-- OCR Options -->
+                    <div class="options-grid">
+                        <div class="option-group">
+                            <label class="option-label" for="docLangSelect">OCR Language Packs</label>
+                            <select id="docLangSelect" class="form-select">
+                                <option value="kan+eng" selected>Kannada + English (kan+eng)</option>
+                                <option value="kan">Kannada Only (kan)</option>
+                                <option value="san+kan">Sanskrit + Kannada (san+kan)</option>
+                                <option value="hin+kan">Hindi + Kannada (hin+kan)</option>
+                                <option value="tam+kan">Tamil + Kannada (tam+kan)</option>
+                                <option value="tel+kan">Telugu + Kannada (tel+kan)</option>
+                            </select>
+                        </div>
+                        <div class="option-group">
+                            <label class="option-label" for="docDpiSelect">Rasterization DPI (Scanned PDFs)</label>
+                            <select id="docDpiSelect" class="form-select">
+                                <option value="300" selected>300 DPI (Recommended / High Quality)</option>
+                                <option value="200">200 DPI (Fast)</option>
+                                <option value="400">400 DPI (Ultra Sharp)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div style="display: flex; justify-content: flex-end;">
+                        <button id="docProcessBtn" class="btn btn-primary" disabled>
+                            <span>🚀</span> Run Ingest, OCR & Autocorrect
+                        </button>
+                    </div>
+
+                    <!-- Progress -->
+                    <div id="docProgressBar" class="progress-bar-container">
+                        <div class="progress-track">
+                            <div class="progress-fill" style="width: 100%;"></div>
+                        </div>
+                        <p id="docProgressStatus" style="font-size: 13px; color: var(--text-dim); margin-top: 8px; text-align: center;">
+                            Processing document...
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Document Results Card -->
+            <div id="docResultsCard" class="card" style="display: none;">
+                <div class="card-header">
+                    <h2><span>🎉</span> Processing Results</h2>
+                    <div style="display: flex; gap: 8px;">
+                        <a id="btnDownloadPdf" class="btn btn-primary btn-sm" href="#" target="_blank">📥 Download Corrected PDF</a>
+                        <a id="btnDownloadTxt" class="btn btn-secondary btn-sm" href="#" target="_blank">📄 Text (.txt)</a>
+                        <a id="btnDownloadJson" class="btn btn-secondary btn-sm" href="#" target="_blank">📊 JSON Report</a>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <!-- Stats -->
+                    <div class="stats-bar">
+                        <div class="stat-card">
+                            <span class="stat-label">Pages Processed</span>
+                            <span id="docStatPages" class="stat-value cyan">0</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-label">Total Corrections</span>
+                            <span id="docStatFixes" class="stat-value amber">0</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-label">Total Time</span>
+                            <span id="docStatTime" class="stat-value success">0.0s</span>
+                        </div>
+                    </div>
+
+                    <!-- Side-by-side Results -->
+                    <div class="editor-grid">
+                        <div class="editor-box">
+                            <div class="editor-toolbar">
+                                <span>Raw Extracted OCR Text</span>
+                            </div>
+                            <div id="docRawDisplay" class="editor-display"></div>
+                        </div>
+                        <div class="editor-box">
+                            <div class="editor-toolbar">
+                                <span>Cleaned & Morphologically Corrected Text</span>
+                            </div>
+                            <div id="docCorrectedDisplay" class="editor-display"></div>
+                        </div>
+                    </div>
+
+                    <!-- Corrections Table -->
+                    <h3 style="font-size: 15px; margin: 20px 0 12px; font-weight: 600;">Correction Breakdown</h3>
+                    <div class="table-container">
+                        <table class="corrections-table">
+                            <thead>
+                                <tr>
+                                    <th style="width: 60px;">#</th>
+                                    <th>Raw Optical OCR Token</th>
+                                    <th>Corrected Kannada Word</th>
+                                    <th>Edit Distance</th>
+                                </tr>
+                            </thead>
+                            <tbody id="docCorrectionsTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ───────────────────────────────────────────────────────────── -->
+        <!-- TAB 3: System Diagnostics -->
+        <!-- ───────────────────────────────────────────────────────────── -->
+        <section id="tabDiagnostics" class="tab-content">
+            <div class="card">
+                <div class="card-header">
+                    <h2><span>⚙️</span> Engine Architecture & Diagnostic Info</h2>
+                </div>
+                <div class="card-body">
+                    <div class="stats-bar">
+                        <div class="stat-card">
+                            <span class="stat-label">Tesseract OCR Status</span>
+                            <span id="diagTessStatus" class="stat-value">Checking...</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-label">Hunspell kn_IN Dictionary</span>
+                            <span id="diagDictCount" class="stat-value cyan">0</span>
+                        </div>
+                    </div>
+
+                    <div style="margin-top: 24px;">
+                        <h3 style="font-size: 14px; font-weight: 600; margin-bottom: 10px; color: var(--text-muted);">
+                            Installed Tesseract Languages
+                        </h3>
+                        <div id="diagLangTags" style="display: flex; flex-wrap: wrap; gap: 8px;">
+                            <span class="btn btn-secondary btn-sm">kan</span>
+                            <span class="btn btn-secondary btn-sm">eng</span>
+                        </div>
+                    </div>
+
+                    <div style="margin-top: 32px; padding: 20px; background: rgba(15, 23, 42, 0.4); border-radius: var(--radius-lg); border: 1px solid var(--border-subtle);">
+                        <h3 style="font-size: 15px; font-weight: 600; margin-bottom: 10px;">Pipeline Pipeline Stack</h3>
+                        <ul style="list-style: square inside; font-size: 14px; color: var(--text-muted); line-height: 1.8;">
+                            <li><strong>Ingestion:</strong> PyMuPDF (fitz) for searchable PDFs + pdf2image with Poppler for scanned docs.</li>
+                            <li><strong>OCR Engine:</strong> Tesseract OCR with multi-language Indic packs (`kan+eng`, `san`, `hin`, `tam`, `tel`).</li>
+                            <li><strong>Normalization:</strong> Indic Virama U+0CCD restoration, double consonant collapse, and short/long vowel repairs.</li>
+                            <li><strong>Morphology:</strong> Agglutinative Kannada suffix stripping, stem analysis, and Sandhi joining.</li>
+                            <li><strong>Scoring:</strong> Weighted Levenshtein distance with Indic confusion pairs + N-gram context ranking.</li>
+                            <li><strong>Export:</strong> FPDF2 layout-preserved PDF with Noto Sans Kannada Unicode TTF + JSON metadata.</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
