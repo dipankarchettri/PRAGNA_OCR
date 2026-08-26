@@ -243,6 +243,118 @@ body {
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
 }
 
+/* ── Engine Mode Selector Bar ── */
+.engine-mode-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: -10px auto 36px;
+  padding: 8px 16px;
+  background: rgba(18, 18, 22, 0.65);
+  border: 1px solid var(--apple-border-subtle);
+  border-radius: var(--radius-md);
+  max-width: fit-content;
+  backdrop-filter: blur(10px);
+}
+
+.engine-bar-label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary);
+}
+
+.engine-pills {
+  display: inline-flex;
+  background: rgba(10, 10, 12, 0.8);
+  padding: 3px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--apple-border);
+  gap: 2px;
+}
+
+.engine-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-sf);
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  outline: none;
+}
+
+.engine-pill:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.engine-pill.active {
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.25), rgba(16, 185, 129, 0.25));
+  color: #38BDF8;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  font-weight: 600;
+  box-shadow: 0 1px 6px rgba(56, 189, 248, 0.15);
+}
+
+.engine-pill-icon {
+  font-size: 13px;
+}
+
+.apple-select-sm {
+  background: rgba(24, 24, 28, 0.9);
+  color: var(--text-primary);
+  border: 1px solid var(--apple-border);
+  border-radius: var(--radius-sm);
+  padding: 5px 10px;
+  font-size: 11.5px;
+  font-family: var(--font-sf);
+  font-weight: 500;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.2s ease;
+}
+
+.apple-select-sm:hover, .apple-select-sm:focus {
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.ai-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  border-radius: var(--radius-sm);
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--apple-emerald);
+}
+
+.ai-status-pill.offline {
+  background: rgba(244, 63, 94, 0.1);
+  border-color: rgba(244, 63, 94, 0.25);
+  color: #F43F5E;
+}
+
+.status-pulse-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: currentColor;
+  box-shadow: 0 0 6px currentColor;
+}
+
 /* ── Tab Views ── */
 .tab-pane {
   display: none;

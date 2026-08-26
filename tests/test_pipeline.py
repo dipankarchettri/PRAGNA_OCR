@@ -106,6 +106,17 @@ class TestKannadaPipeline(unittest.TestCase):
         self.assertTrue(os.path.exists(out))
         self.assertGreater(os.path.getsize(out), 500)
 
+    def test_process_text_input_modes(self):
+        from pipeline import process_text_input
+        # Test algorithmic mode
+        res_algo = process_text_input("ಶಿಕ್ಷಣವು ಜಿವನದಲ್ಲಿ ಪ್ರಮುಖ", engine_mode='algo')
+        self.assertIn("ಜೀವನದಲ್ಲಿ", res_algo['corrected'])
+        self.assertEqual(res_algo['engine_mode'], 'algorithmic')
+
+        # Test hybrid mode fallback resilience
+        res_hybrid = process_text_input("ಶಿಕ್ಷಣವು ಜಿವನದಲ್ಲಿ ಪ್ರಮುಖ", engine_mode='hybrid')
+        self.assertIn("ಜೀವನದಲ್ಲಿ", res_hybrid['corrected'])
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -45,6 +45,32 @@
                     </button>
                 </div>
             </div>
+
+            <!-- Engine Mode Selector Bar -->
+            <div class="engine-mode-bar">
+                <span class="engine-bar-label">Engine Mode:</span>
+                <div class="engine-pills" id="engineModeGroup">
+                    <button class="engine-pill" data-mode="algo" id="engineAlgoBtn" title="Instant Algorithmic Sandhi & Hunspell Dictionary">
+                        <span class="engine-pill-icon">⚡</span> Algorithmic (Fast)
+                    </button>
+                    <button class="engine-pill active" data-mode="hybrid" id="engineHybridBtn" title="Algorithmic Pre-Clean + Local AI Proofreader">
+                        <span class="engine-pill-icon">🔄</span> Hybrid (Recommended)
+                    </button>
+                    <button class="engine-pill" data-mode="ai" id="engineAiBtn" title="Neural Indic Contextual Proofreading via Ollama">
+                        <span class="engine-pill-icon">🤖</span> Local AI (Ollama)
+                    </button>
+                </div>
+                <div class="engine-model-picker" id="engineModelPickerWrapper">
+                    <select id="aiModelSelect" class="apple-select-sm" title="Select Local AI Model">
+                        <option value="qwen2.5:3b">qwen2.5:3b (Indic Neural)</option>
+                        <option value="llama3.2:3b">llama3.2:3b</option>
+                        <option value="gemma2:2b">gemma2:2b</option>
+                    </select>
+                </div>
+                <div id="aiStatusPill" class="ai-status-pill online">
+                    <span class="status-pulse-dot"></span> <span id="aiStatusText">Ollama Ready</span>
+                </div>
+            </div>
         </header>
 
         <!-- ───────────────────────────────────────────────────────────── -->
@@ -310,12 +336,12 @@
                             <span id="diagDictCount" class="apple-stat-value cyan">0</span>
                         </div>
                         <div class="apple-stat-card">
-                            <span class="apple-stat-label">Maximum Upload Size</span>
-                            <span class="apple-stat-value">250 MB</span>
+                            <span class="apple-stat-label">Local AI Engine (Ollama)</span>
+                            <span id="diagOllamaStatus" class="apple-stat-value emerald">Online</span>
                         </div>
                         <div class="apple-stat-card">
-                            <span class="apple-stat-label">Typography Model</span>
-                            <span class="apple-stat-value emerald">Noto Sans</span>
+                            <span class="apple-stat-label">Active AI Model</span>
+                            <span id="diagActiveAiModel" class="apple-stat-value amber">qwen2.5:3b</span>
                         </div>
                     </div>
 

@@ -63,30 +63,41 @@ def index():
     return render_template('index.html')
 
 
+from pipeline.correction.ai_proofreader import is_ollama_running, get_installed_models
+
+
 @app.route('/api/system-status', methods=['GET'])
 def system_status():
-    """Return backend status, installed OCR engines, and dictionary stats."""
+    """Return backend status, installed OCR engines, AI models, and dictionary stats."""
     tess_installed = is_tesseract_available()
     avail_langs = get_available_languages() if tess_installed else []
+    ollama_active = is_ollama_running()
+    ollama_models = get_installed_models() if ollama_active else []
     
     return jsonify({
         'tesseract_available': tess_installed,
         'installed_languages': avail_langs,
         'supported_languages': SUPPORTED_LANGUAGES,
         'dictionary_words_count': len(get_word_list()),
-        'max_upload_size_mb': 250
+        'max_upload_size_mb': 250,
+        'ollama_available': ollama_active,
+        'ollama_models': ollama_models,
+        'default_ai_model': ollama_models[0] if ollama_models else 'qwen2.5:3b'
     })
 
 
 @app.route('/api/correct-text', methods=['POST'])
 def api_correct_text():
-    """Instant autocorrect for raw text."""
+    """Instant autocorrect for raw text using selected engine (algo, AI, or hybrid)."""
     data = request.get_json(force=True)
     text = (data.get('text') or '').strip()
+    engine_mode = data.get('engine_mode', 'hybrid')
+    ai_model = data.get('ai_model')
+
     if not text:
         return jsonify({'error': 'No text provided.'}), 400
 
-    result = process_text_input(text)
+    result = process_text_input(text, engine_mode=engine_mode, ai_model=ai_model)
     return jsonify(result)
 
 
@@ -162,6 +173,8 @@ def api_process_stream(session_id: str):
     lang = request.args.get('lang', 'kan+eng')
     dpi = int(request.args.get('dpi', 300))
     save_images = request.args.get('save_images', 'false').lower() == 'true'
+    engine_mode = request.args.get('engine_mode', 'hybrid')
+    ai_model = request.args.get('ai_model')
 
     upload_path = session_data['upload_path']
     output_dir = os.path.join(PROCESSED_FOLDER, session_id)
@@ -181,6 +194,8 @@ def api_process_stream(session_id: str):
                 output_dir=output_dir,
                 save_pdf=True,
                 save_images=save_images,
+                engine_mode=engine_mode,
+                ai_model=ai_model,
                 progress_callback=progress_callback
             )
             event_q.put({
@@ -196,6 +211,7 @@ def api_process_stream(session_id: str):
                     'total_pages': res['total_pages'],
                     'total_corrections': res['total_corrections'],
                     'latency_seconds': res['latency_seconds'],
+                    'engine_mode': engine_mode,
                     'download_urls': {
                         'pdf': f'/api/download/{session_id}/pdf',
                         'txt': f'/api/download/{session_id}/txt',
@@ -246,6 +262,8 @@ def api_process_document():
     lang = request.form.get('lang', 'kan+eng')
     dpi = int(request.form.get('dpi', 300))
     save_images = request.form.get('save_images', 'false').lower() == 'true'
+    engine_mode = request.form.get('engine_mode', 'hybrid')
+    ai_model = request.form.get('ai_model')
 
     session_id = uuid.uuid4().hex
     safe_name = safe_upload_filename(file.filename)
@@ -262,7 +280,9 @@ def api_process_document():
             dpi=dpi,
             output_dir=output_dir,
             save_pdf=True,
-            save_images=save_images
+            save_images=save_images,
+            engine_mode=engine_mode,
+            ai_model=ai_model
         )
 
         return jsonify({

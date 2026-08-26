@@ -1,13 +1,43 @@
-/**
- * Kannada OCR & Autocorrect — Apple-Grade Frontend Logic
- */
+let currentEngineMode = 'hybrid';
+let currentAiModel = 'qwen2.5:3b';
 
 document.addEventListener('DOMContentLoaded', () => {
     initTabs();
+    initEngineSelector();
     initLiveAutocorrect();
     initDocumentUpload();
     initSystemStatus();
 });
+
+/* ── Engine Mode Selector ── */
+function initEngineSelector() {
+    const pills = document.querySelectorAll('.engine-pill');
+    const modelSelect = document.getElementById('aiModelSelect');
+
+    pills.forEach(pill => {
+        pill.addEventListener('click', () => {
+            pills.forEach(p => p.classList.remove('active'));
+            pill.classList.add('active');
+            currentEngineMode = pill.getAttribute('data-mode') || 'hybrid';
+            
+            // Re-trigger live text correction if text is present
+            const liveInput = document.getElementById('liveRawInput');
+            if (liveInput && liveInput.value.trim()) {
+                liveInput.dispatchEvent(new Event('input'));
+            }
+        });
+    });
+
+    if (modelSelect) {
+        modelSelect.addEventListener('change', () => {
+            currentAiModel = modelSelect.value;
+            const liveInput = document.getElementById('liveRawInput');
+            if (liveInput && liveInput.value.trim()) {
+                liveInput.dispatchEvent(new Event('input'));
+            }
+        });
+    }
+}
 
 /* ── Top-Level Shared Utilities ── */
 
@@ -160,7 +190,11 @@ function initLiveAutocorrect() {
             const resp = await fetch('/api/correct-text', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text })
+                body: JSON.stringify({
+                    text,
+                    engine_mode: currentEngineMode,
+                    ai_model: currentAiModel
+                })
             });
             const data = await resp.json();
 
@@ -436,6 +470,8 @@ function initDocumentUpload() {
         formData.append('file', selectedFile);
         formData.append('lang', lang);
         formData.append('dpi', dpi);
+        formData.append('engine_mode', currentEngineMode);
+        if (currentAiModel) formData.append('ai_model', currentAiModel);
 
         fetch('/api/process-document', {
             method: 'POST',
@@ -474,7 +510,8 @@ function initDocumentUpload() {
         }
 
         let streamReceivedAny = false;
-        activeEventSource = new EventSource(`/api/process-stream/${sessionId}?lang=${encodeURIComponent(lang)}&dpi=${encodeURIComponent(dpi)}`);
+        const streamUrl = `/api/process-stream/${sessionId}?lang=${encodeURIComponent(lang)}&dpi=${encodeURIComponent(dpi)}&engine_mode=${encodeURIComponent(currentEngineMode)}&ai_model=${encodeURIComponent(currentAiModel)}`;
+        activeEventSource = new EventSource(streamUrl);
 
         activeEventSource.onmessage = (e) => {
             streamReceivedAny = true;
@@ -617,6 +654,11 @@ async function initSystemStatus() {
         const tessStatusEl = document.getElementById('diagTessStatus');
         const dictCountEl = document.getElementById('diagDictCount');
         const langTagsEl = document.getElementById('diagLangTags');
+        const ollamaStatusEl = document.getElementById('diagOllamaStatus');
+        const activeAiModelEl = document.getElementById('diagActiveAiModel');
+        const aiStatusPill = document.getElementById('aiStatusPill');
+        const aiStatusText = document.getElementById('aiStatusText');
+        const modelSelect = document.getElementById('aiModelSelect');
 
         if (tessStatusEl) {
             tessStatusEl.textContent = data.tesseract_available ? 'Active' : 'Standby / Digital Mode';
@@ -625,6 +667,34 @@ async function initSystemStatus() {
 
         if (dictCountEl) {
             dictCountEl.textContent = data.dictionary_words_count.toLocaleString();
+        }
+
+        // Ollama AI Diagnostics
+        if (ollamaStatusEl) {
+            ollamaStatusEl.textContent = data.ollama_available ? 'Online (Active)' : 'Offline / Standby';
+            ollamaStatusEl.className = data.ollama_available ? 'apple-stat-value emerald' : 'apple-stat-value';
+        }
+
+        if (activeAiModelEl) {
+            activeAiModelEl.textContent = data.default_ai_model || 'qwen2.5:3b';
+        }
+
+        if (aiStatusPill && aiStatusText) {
+            if (data.ollama_available) {
+                aiStatusPill.className = 'ai-status-pill online';
+                aiStatusText.textContent = `Ollama Online (${data.ollama_models && data.ollama_models.length ? data.ollama_models[0] : 'Ready'})`;
+            } else {
+                aiStatusPill.className = 'ai-status-pill offline';
+                aiStatusText.textContent = 'Ollama Standby';
+            }
+        }
+
+        // Populate Model Select Options
+        if (modelSelect && data.ollama_models && data.ollama_models.length > 0) {
+            modelSelect.innerHTML = data.ollama_models.map(m => `
+                <option value="${escapeHtml(m)}">${escapeHtml(m)}</option>
+            `).join('');
+            currentAiModel = data.ollama_models[0];
         }
 
         if (langTagsEl && data.installed_languages && data.installed_languages.length > 0) {

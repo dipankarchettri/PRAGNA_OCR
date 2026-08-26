@@ -24,6 +24,8 @@ from .exporter import (
     export_json_report
 )
 
+from .correction.ai_proofreader import proofread_kannada_ai, is_ollama_running, get_installed_models
+
 _INITIALIZED = False
 
 
@@ -38,11 +40,39 @@ def init_pipeline(dic_path: Optional[str] = None):
     _INITIALIZED = True
 
 
-def process_text_input(text: str) -> Dict[str, Any]:
-    """Process raw text input directly through the cleaning and correction engine."""
+def process_text_input(
+    text: str,
+    engine_mode: str = 'hybrid',
+    ai_model: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Process raw text input directly through the selected correction engine.
+    Modes:
+      - 'algo': Fast sub-millisecond Algorithmic & Sandhi engine.
+      - 'ai': Neural Indic contextual proofreader via Ollama.
+      - 'hybrid': Algorithmic pre-normalization + AI contextual proofreading.
+    """
     init_pipeline()
     start_t = time.time()
-    result = correct_text(text)
+
+    if engine_mode == 'ai':
+        result = proofread_kannada_ai(text, model=ai_model)
+    elif engine_mode == 'hybrid':
+        # Fast algorithmic pre-clean then AI contextual refinement
+        if is_ollama_running():
+            algo_res = correct_text(text)
+            ai_res = proofread_kannada_ai(algo_res['corrected'], model=ai_model)
+            # Merge corrections
+            result = ai_res
+            result['original'] = text
+            result['engine_mode'] = 'hybrid'
+        else:
+            result = correct_text(text)
+            result['engine_mode'] = 'algorithmic (ai offline)'
+    else:
+        result = correct_text(text)
+        result['engine_mode'] = 'algorithmic'
+
     result['latency_seconds'] = round(time.time() - start_t, 3)
     return result
 
@@ -54,6 +84,8 @@ def process_document(
     output_dir: Optional[str] = None,
     save_pdf: bool = True,
     save_images: bool = False,
+    engine_mode: str = 'hybrid',
+    ai_model: Optional[str] = None,
     progress_callback: Optional[callable] = None
 ) -> Dict[str, Any]:
     """
@@ -156,12 +188,18 @@ def process_document(
 
                 # OCR with layout
                 lines = ocr_image_with_layout(img, lang=lang, page_num=page_num)
-                corrected_lines, page_corrections = correct_layout_lines(lines)
-                all_layout_lines.extend(corrected_lines)
-                all_corrections.extend(page_corrections)
-
                 raw_page_text = '\n'.join(l['text'] for l in lines)
-                corr_page_text = '\n'.join(l['text'] for l in corrected_lines)
+
+                if engine_mode in ('ai', 'hybrid') and is_ollama_running():
+                    page_res = process_text_input(raw_page_text, engine_mode=engine_mode, ai_model=ai_model)
+                    corr_page_text = page_res['corrected']
+                    page_corrections = page_res['corrections']
+                else:
+                    corrected_lines, page_corrections = correct_layout_lines(lines)
+                    all_layout_lines.extend(corrected_lines)
+                    corr_page_text = '\n'.join(l['text'] for l in corrected_lines)
+
+                all_corrections.extend(page_corrections)
 
                 pages_result.append({
                     'page_num': page_num,
@@ -188,12 +226,18 @@ def process_document(
             saved_images_paths.append(img_path)
 
         lines = ocr_image_with_layout(img, lang=lang, page_num=1)
-        corrected_lines, page_corrections = correct_layout_lines(lines)
-        all_layout_lines.extend(corrected_lines)
-        all_corrections.extend(page_corrections)
-
         raw_page_text = '\n'.join(l['text'] for l in lines)
-        corr_page_text = '\n'.join(l['text'] for l in corrected_lines)
+
+        if engine_mode in ('ai', 'hybrid') and is_ollama_running():
+            page_res = process_text_input(raw_page_text, engine_mode=engine_mode, ai_model=ai_model)
+            corr_page_text = page_res['corrected']
+            page_corrections = page_res['corrections']
+        else:
+            corrected_lines, page_corrections = correct_layout_lines(lines)
+            all_layout_lines.extend(corrected_lines)
+            corr_page_text = '\n'.join(l['text'] for l in corrected_lines)
+
+        all_corrections.extend(page_corrections)
 
         pages_result.append({
             'page_num': 1,

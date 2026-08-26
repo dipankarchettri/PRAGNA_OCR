@@ -47,6 +47,9 @@ def handle_single_file(args):
     print(f"[*] Processing file: {Path(filepath).name}")
     print(f"    Language      : {args.lang}")
     print(f"    DPI           : {args.dpi}")
+    print(f"    Engine Mode   : {args.engine.upper()}")
+    if args.engine in ('ai', 'hybrid'):
+        print(f"    AI Model      : {args.ai_model}")
     print(f"    Generate PDF  : {'Yes' if not args.no_pdf else 'No'}")
     print(f"    Save Images   : {'Yes' if args.save_images else 'No'}\n")
 
@@ -61,6 +64,8 @@ def handle_single_file(args):
             output_dir=args.output_dir,
             save_pdf=not args.no_pdf,
             save_images=args.save_images,
+            engine_mode=args.engine,
+            ai_model=args.ai_model,
             progress_callback=progress_cb
         )
 
@@ -113,7 +118,9 @@ def handle_batch(args):
                 dpi=args.dpi,
                 output_dir=item_out,
                 save_pdf=not args.no_pdf,
-                save_images=args.save_images
+                save_images=args.save_images,
+                engine_mode=args.engine,
+                ai_model=args.ai_model
             )
             print(f"    -> Pages: {res['total_pages']} | Corrections: {res['total_corrections']} | Time: {res['latency_seconds']}s")
         except Exception as e:
@@ -123,8 +130,8 @@ def handle_batch(args):
 
 
 def handle_text(args):
-    print("[*] Correcting input text...\n")
-    res = process_text_input(args.text)
+    print(f"[*] Correcting input text (Engine: {args.engine.upper()})...\n")
+    res = process_text_input(args.text, engine_mode=args.engine, ai_model=args.ai_model)
 
     print("--- Original ---")
     print(res['original'])
@@ -159,6 +166,8 @@ Combine multiple languages with '+': --lang kan+eng or --lang san+kan
     parser.add_argument('--batch', '-b', help='Directory of PDFs/images to process in batch mode')
     parser.add_argument('--lang', '-l', default='kan+eng', help='Tesseract OCR language code(s) (default: kan+eng)')
     parser.add_argument('--dpi', '-d', type=int, default=300, help='DPI for PDF page rasterization (default: 300)')
+    parser.add_argument('--engine', '-e', choices=['algo', 'ai', 'hybrid'], default='hybrid', help='Correction engine mode: algo (instant algorithmic), ai (Ollama local AI), or hybrid (default)')
+    parser.add_argument('--ai-model', '-m', default='qwen2.5:3b', help='Local Ollama model name (default: qwen2.5:3b)')
     parser.add_argument('--output-dir', '-o', help='Output directory for generated files')
     parser.add_argument('--no-pdf', action='store_true', help='Skip generating corrected PDF document')
     parser.add_argument('--save-images', '-s', action='store_true', help='Save rasterized intermediate page images')
