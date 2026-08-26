@@ -163,6 +163,7 @@ function initDocumentUpload() {
     const docStatFixes = document.getElementById('docStatFixes');
     const docStatTime = document.getElementById('docStatTime');
 
+    const btnCopyDocText = document.getElementById('btnCopyDocText');
     const btnDownloadPdf = document.getElementById('btnDownloadPdf');
     const btnDownloadTxt = document.getElementById('btnDownloadTxt');
     const btnDownloadJson = document.getElementById('btnDownloadJson');
@@ -170,6 +171,18 @@ function initDocumentUpload() {
 
     let selectedFile = null;
     let activeEventSource = null;
+    let latestDocCorrectedText = '';
+
+    if (btnCopyDocText) {
+        btnCopyDocText.addEventListener('click', () => {
+            if (latestDocCorrectedText) {
+                navigator.clipboard.writeText(latestDocCorrectedText);
+                btnCopyDocText.textContent = 'Copied ✓';
+                setTimeout(() => { btnCopyDocText.textContent = 'Copy Text'; }, 2000);
+            }
+        });
+    }
+
 
     if (dropzone && fileInput) {
         dropzone.addEventListener('click', () => fileInput.click());
@@ -368,21 +381,35 @@ function initDocumentUpload() {
 
     function renderDocumentResults(data) {
         if (!data) return;
+        latestDocCorrectedText = data.corrected_text || '';
         docResultsCard.style.display = 'block';
+
         docStatPages.textContent = data.total_pages ?? (data.result ? data.result.total_pages : 0);
         docStatFixes.textContent = data.total_corrections ?? (data.result ? data.result.total_corrections : 0);
         docStatTime.textContent = `${data.latency_seconds || 0}s`;
 
         docRawDisplay.textContent = data.raw_text || '(No text extracted)';
-        docCorrectedDisplay.textContent = data.corrected_text || '(No text extracted)';
 
+        // Highlight corrections with green diff pills in the output display
+        const corrections = (data.result && data.result.corrections_summary) ? data.result.corrections_summary : [];
+        let highlighted = escapeHtml(data.corrected_text || '');
+        if (corrections.length > 0) {
+            corrections.forEach(c => {
+                if (c.correction && c.original && c.correction !== c.original) {
+                    const escapedCorr = escapeHtml(c.correction);
+                    const escapedOrig = escapeHtml(c.original);
+                    const reg = new RegExp(`(${escapedCorr})`, 'g');
+                    highlighted = highlighted.replace(reg, `<mark class="apple-diff-pill" title="Original OCR: ${escapedOrig}">$1</mark>`);
+                }
+            });
+        }
+        docCorrectedDisplay.innerHTML = highlighted || '(No text extracted)';
 
         btnDownloadPdf.href = data.download_urls.pdf;
         btnDownloadTxt.href = data.download_urls.txt;
         btnDownloadJson.href = data.download_urls.json;
 
         // Render detailed corrections
-        const corrections = data.result.corrections_summary || [];
         if (corrections.length > 0) {
             docCorrectionsTableBody.innerHTML = corrections.map((c, idx) => `
                 <tr>
@@ -398,6 +425,7 @@ function initDocumentUpload() {
 
         docResultsCard.scrollIntoView({ behavior: 'smooth' });
     }
+
 }
 
 
