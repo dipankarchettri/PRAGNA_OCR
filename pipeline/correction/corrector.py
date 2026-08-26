@@ -241,7 +241,23 @@ def generate_kannada_candidates(
         if res:
             candidates.append((res, 0.35, 'ocr_repair'))
 
-    # 10. Deduplicate candidates and score with weighted Levenshtein & N-gram Language Model
+    # 10. Universal 1-Edit Deletion & Boundary Insertion (Handles OCR truncation or speckle insertions)
+    if len(w) >= 3:
+        # Single character deletion
+        for i in range(len(w)):
+            cand = w[:i] + w[i+1:]
+            res = resolve_valid_surface_form(cand, dictionary)
+            if res:
+                candidates.append((res, 0.40, 'word_correction'))
+
+        # Terminal single-character insertion (handles truncated word endings)
+        for ch in KANNADA_CONSONANTS:
+            cand = w + ch
+            res = resolve_valid_surface_form(cand, dictionary)
+            if res:
+                candidates.append((res, 0.35, 'word_correction'))
+
+    # 11. Deduplicate candidates and score with weighted Levenshtein & N-gram Language Model
     candidate_dict: Dict[str, Tuple[float, str]] = {}
     for cand, base_cost, ctype in candidates:
         if cand not in candidate_dict or base_cost < candidate_dict[cand][0]:
@@ -257,9 +273,6 @@ def generate_kannada_candidates(
 
         final_score = round(base_cost - lm_bonus, 3)
         ranked.append((cand, final_score, ctype))
-
-    ranked.sort(key=lambda x: x[1])
-    return ranked
 
     ranked.sort(key=lambda x: x[1])
     return ranked
