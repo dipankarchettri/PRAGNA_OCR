@@ -2,10 +2,7 @@
 <html lang="kn">
 <head>
     <meta charset="UTF-8">
-    <link rel="stylesheet" href="/static/css/style.css?v=2.3">
-
-
-
+    <link rel="stylesheet" href="/static/css/style.css?v=2.4">
 </head>
 <body>
     <!-- Apple Floating Sticky Nav -->
@@ -154,8 +151,20 @@
                         <div class="dropzone-icon-circle">↑</div>
                         <div class="dropzone-heading">Drop your document here</div>
                         <div class="dropzone-subtext">Supports PDF (searchable or scanned), PNG, JPG, TIFF, WEBP up to 250MB</div>
-                        <div id="selectedFileName" style="display: none; margin-top: 14px; font-weight: 600; color: var(--apple-emerald);"></div>
-                        <input type="file" id="docFileInput" style="display: none;" accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif,.bmp,.webp">
+                        <button type="button" id="btnBrowseFiles" class="apple-btn apple-btn-secondary apple-btn-sm" style="margin-top: 14px;">Browse Files</button>
+                    </div>
+                    <input type="file" id="docFileInput" style="display: none;" accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif,.bmp,.webp">
+
+                    <!-- Selected File Preview Card -->
+                    <div id="selectedFileCard" style="display: none; margin-bottom: 20px; padding: 14px 18px; background: rgba(0, 113, 227, 0.08); border: 1px solid rgba(0, 113, 227, 0.35); border-radius: var(--radius-sm); align-items: center; justify-content: space-between;">
+                        <div style="display: flex; align-items: center; gap: 14px;">
+                            <span id="fileIconBadge" style="font-size: 22px;">📄</span>
+                            <div>
+                                <div id="selectedFileNameText" style="font-weight: 600; color: #FFFFFF; font-size: 14px;"></div>
+                                <div id="selectedFileSizeText" style="font-size: 12px; color: var(--apple-cyan);"></div>
+                            </div>
+                        </div>
+                        <button type="button" id="btnRemoveFile" class="apple-btn apple-btn-secondary apple-btn-sm" style="font-size: 11px;">Change File</button>
                     </div>
 
                     <!-- Pipeline Options -->
@@ -345,9 +354,6 @@
         </footer>
     </div>
 
-    <script src="/static/js/app.js?v=2.3"></script>
-
-
-
+    <script src="/static/js/app.js?v=2.4"></script>
 </body>
 </html>

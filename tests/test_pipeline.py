@@ -12,7 +12,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE_DIR)
 
 from pipeline.correction.tokenizer import tokenize, reconstruct
-from pipeline.correction.ocr_repairs import apply_ocr_repairs
+from pipeline.correction.ocr_repairs import normalize_script, clean_unicode_glitches, normalize_indic_repha
 from pipeline.correction.morphology import decompose_word, join_root_suffix
 from pipeline.correction.dictionary import load_dictionary, get_dictionary
 from pipeline.correction.edit_distance import weighted_edit_distance
@@ -36,34 +36,52 @@ class TestKannadaPipeline(unittest.TestCase):
         kannada_tokens = [t for t in tokens if t['type'] == 'kannada']
         self.assertEqual(len(kannada_tokens), 2)
 
-    def test_ocr_repairs(self):
-        dict_words = get_dictionary()
+    def test_script_normalization(self):
+        # Universal Repha normalizations
+        self.assertEqual(normalize_indic_repha("ಕನಾ೯ಟಕ"), "ಕರ್ನಾಟಕ")
+        self.assertEqual(normalize_indic_repha("ಕತ೯ವ್ಯ"), "ಕರ್ತವ್ಯ")
+        self.assertEqual(normalize_indic_repha("ಮಾ೯"), "ರ್ಮಾ")
         
-        # Missing virama repairs
-        cand, r_type = apply_ocr_repairs("ಶಿಕಷ", dict_words)
-        self.assertEqual(cand, "ಶಿಕ್ಷ")
-        self.assertEqual(r_type, "ocr_repair")
-        
-        cand2, r_type2 = apply_ocr_repairs("ಕನಾ೯ಟಕ", dict_words)
-        self.assertEqual(cand2, "ಕರ್ನಾಟಕ")
-        self.assertEqual(r_type2, "ocr_repair")
-        
-        # Vowel repairs
-        cand3, r_type3 = apply_ocr_repairs("ಜಿವನ", dict_words)
-        self.assertTrue(cand3.startswith("ಜೀವನ"))
-        self.assertEqual(r_type3, "word_correction")
+        # Zero-digit anusvara cleanup
+        self.assertEqual(clean_unicode_glitches("ಗ್ರಹಿಸಿಕೊ೦ಂಡೇ"), "ಗ್ರಹಿಸಿಕೊಂಡೇ")
 
+    def test_dynamic_ocr_repairs(self):
+        # Optical glyph repairs (Blue)
+        cand1, dist1, type1 = suggest_kannada_word("ಕಾಥಿ")
+        self.assertEqual(cand1, "ಕಾಫಿ")
+        self.assertEqual(type1, "ocr_repair")
 
+        cand2, dist2, type2 = suggest_kannada_word("ದೂಹಿಸು")
+        self.assertEqual(cand2, "ದೂಷಿಸು")
+        self.assertEqual(type2, "ocr_repair")
+
+        cand3, dist3, type3 = suggest_kannada_word("ಯೋಪನೆ")
+        self.assertEqual(cand3, "ಯೋಜನೆ")
+        self.assertEqual(type3, "ocr_repair")
+
+        cand4, dist4, type4 = suggest_kannada_word("ಕನಾ೯ಟಕ")
+        self.assertEqual(cand4, "ಕರ್ನಾಟಕ")
+        self.assertEqual(type4, "ocr_repair")
+
+        # Systematic vowel length repairs (Green)
+        cand5, dist5, type5 = suggest_kannada_word("ಜಿವನ")
+        self.assertEqual(cand5, "ಜೀವನ")
+        self.assertEqual(type5, "word_correction")
+
+        cand6, dist6, type6 = suggest_kannada_word("ಸಂಗಿತ")
+        self.assertEqual(cand6, "ಸಂಗೀತ")
+        self.assertEqual(type6, "word_correction")
 
     def test_morphology_and_sandhi(self):
-        dict_words = get_dictionary()
-        
         # Test Sandhi join
         joined = join_root_suffix("ವಹಿಸು", "ುತ್ತದೆ")
         self.assertEqual(joined, "ವಹಿಸುತ್ತದೆ")
 
         joined2 = join_root_suffix("ಮನಸ್ಸು", "ಗೆ")
         self.assertEqual(joined2, "ಮನಸ್ಸಿಗೆ")
+
+        joined3 = join_root_suffix("ಮಾಡಿಕೊಡು", "ತ್ತಾರೆ")
+        self.assertEqual(joined3, "ಮಾಡಿಕೊಡುತ್ತಾರೆ")
 
     def test_weighted_edit_distance(self):
         # Confused characters should have lower cost than unrelated characters
@@ -91,3 +109,4 @@ class TestKannadaPipeline(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+

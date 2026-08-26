@@ -219,14 +219,21 @@ function initLiveAutocorrect() {
 
 /* ── Tab 2: Document Upload & Real-Time Pipeline Stream ── */
 function initDocumentUpload() {
-    const dropzone = document.getElementById('docDropzone') || document.getElementById('uploadDropzone');
+    const dropzone = document.getElementById('uploadDropzone') || document.getElementById('docDropzone');
     const fileInput = document.getElementById('docFileInput');
-    const langSelect = document.getElementById('ocrLangSelect') || document.getElementById('docLangSelect');
-    const dpiSelect = document.getElementById('dpiSelect') || document.getElementById('docDpiSelect');
-    const processBtn = document.getElementById('btnProcessDoc') || document.getElementById('docProcessBtn');
+    const btnBrowseFiles = document.getElementById('btnBrowseFiles');
+    const selectedFileCard = document.getElementById('selectedFileCard');
+    const selectedFileNameText = document.getElementById('selectedFileNameText');
+    const selectedFileSizeText = document.getElementById('selectedFileSizeText');
+    const fileIconBadge = document.getElementById('fileIconBadge');
+    const btnRemoveFile = document.getElementById('btnRemoveFile');
+
+    const langSelect = document.getElementById('docLangSelect') || document.getElementById('ocrLangSelect');
+    const dpiSelect = document.getElementById('docDpiSelect') || document.getElementById('dpiSelect');
+    const processBtn = document.getElementById('docProcessBtn') || document.getElementById('btnProcessDoc');
     
     const progressCard = document.getElementById('docProgressCard');
-    const progressStageBadge = document.getElementById('docProgressStagePill') || document.getElementById('docProgressStageBadge');
+    const progressStageBadge = document.getElementById('docProgressStageBadge') || document.getElementById('docProgressStagePill');
     const progressPercent = document.getElementById('docProgressPercent');
     const progressBarFill = document.getElementById('docProgressBarFill');
     const progressStatusText = document.getElementById('docProgressStatusText');
@@ -244,7 +251,6 @@ function initDocumentUpload() {
     const btnDownloadTxt = document.getElementById('btnDownloadTxt');
     const btnDownloadJson = document.getElementById('btnDownloadJson');
     const docCorrectionsTableBody = document.getElementById('docCorrectionsTableBody');
-    const dropzoneText = document.getElementById('dropzoneText');
 
     let selectedFile = null;
     let activeEventSource = null;
@@ -260,17 +266,38 @@ function initDocumentUpload() {
         });
     }
 
+    // Trigger file chooser on dropzone click or Browse button
     if (dropzone && fileInput) {
-        dropzone.addEventListener('click', () => fileInput.click());
+        dropzone.addEventListener('click', (e) => {
+            if (e.target !== btnBrowseFiles) {
+                fileInput.click();
+            }
+        });
+
+        if (btnBrowseFiles) {
+            btnBrowseFiles.addEventListener('click', (e) => {
+                e.stopPropagation();
+                fileInput.click();
+            });
+        }
+
         dropzone.addEventListener('dragover', (e) => {
             e.preventDefault();
+            e.stopPropagation();
             dropzone.classList.add('dragover');
         });
-        dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+
+        dropzone.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dropzone.classList.remove('dragover');
+        });
+
         dropzone.addEventListener('drop', (e) => {
             e.preventDefault();
+            e.stopPropagation();
             dropzone.classList.remove('dragover');
-            if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+            if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]) {
                 handleFileSelected(e.dataTransfer.files[0]);
             }
         });
@@ -282,18 +309,53 @@ function initDocumentUpload() {
         });
     }
 
-    function handleFileSelected(file) {
-        selectedFile = file;
-        if (dropzoneText) {
-            dropzoneText.textContent = `✓ Selected: ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB)`;
-        }
+    if (btnRemoveFile) {
+        btnRemoveFile.addEventListener('click', (e) => {
+            e.stopPropagation();
+            clearSelectedFile();
+            if (fileInput) fileInput.click();
+        });
+    }
+
+    function clearSelectedFile() {
+        selectedFile = null;
+        if (fileInput) fileInput.value = '';
+        if (selectedFileCard) selectedFileCard.style.display = 'none';
         if (dropzone) {
-            dropzone.style.borderColor = 'var(--apple-blue)';
-            dropzone.style.background = 'rgba(0, 113, 227, 0.05)';
+            dropzone.style.borderColor = '';
+            dropzone.style.background = '';
         }
         if (processBtn) {
-            processBtn.disabled = false;
+            processBtn.disabled = true;
             processBtn.textContent = 'Run Ingest & Correction';
+        }
+    }
+
+    function handleFileSelected(file) {
+        selectedFile = file;
+        const sizeMb = (file.size / (1024 * 1024)).toFixed(2);
+        const ext = (file.name.split('.').pop() || '').toLowerCase();
+
+        let icon = '📄';
+        if (ext === 'pdf') icon = '📑';
+        else if (['jpg', 'jpeg', 'png', 'webp', 'tiff', 'tif', 'bmp'].includes(ext)) icon = '🖼️';
+
+        if (fileIconBadge) fileIconBadge.textContent = icon;
+        if (selectedFileNameText) selectedFileNameText.textContent = file.name;
+        if (selectedFileSizeText) selectedFileSizeText.textContent = `${sizeMb} MB • Ready for Ingestion`;
+
+        if (selectedFileCard) {
+            selectedFileCard.style.display = 'flex';
+        }
+
+        if (dropzone) {
+            dropzone.style.borderColor = 'var(--apple-blue)';
+            dropzone.style.background = 'rgba(0, 113, 227, 0.04)';
+        }
+
+        if (processBtn) {
+            processBtn.disabled = false;
+            processBtn.textContent = `Process "${file.name.length > 20 ? file.name.substring(0, 18) + '...' : file.name}"`;
         }
     }
 
@@ -305,9 +367,12 @@ function initDocumentUpload() {
             }
 
             processBtn.disabled = true;
-            processBtn.textContent = 'Processing...';
+            processBtn.textContent = 'Processing Document...';
             if (docResultsCard) docResultsCard.style.display = 'none';
-            if (progressCard) progressCard.style.display = 'block';
+            if (progressCard) {
+                progressCard.style.display = 'block';
+                progressCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
 
             if (progressStageBadge) progressStageBadge.textContent = 'Uploading';
             if (progressPercent) progressPercent.textContent = '0%';
@@ -315,7 +380,7 @@ function initDocumentUpload() {
             if (progressStatusText) progressStatusText.textContent = `Uploading ${selectedFile.name}...`;
             if (progressMetaText) progressMetaText.textContent = `0 / ${(selectedFile.size / (1024 * 1024)).toFixed(1)} MB`;
 
-            // Phase 1: Upload with byte progress tracking
+            // Phase 1: Fast upload
             const xhr = new XMLHttpRequest();
             const formData = new FormData();
             formData.append('file', selectedFile);
@@ -327,34 +392,72 @@ function initDocumentUpload() {
                     const totalMb = (e.total / (1024 * 1024)).toFixed(1);
 
                     if (progressPercent) progressPercent.textContent = `${Math.min(upPct, 99)}%`;
-                    if (progressBarFill) progressBarFill.style.width = `${Math.min(upPct * 0.15, 15)}%`;
-                    if (progressStatusText) progressStatusText.textContent = `Uploading document to server...`;
+                    if (progressBarFill) progressBarFill.style.width = `${Math.min(upPct * 0.20, 20)}%`;
+                    if (progressStatusText) progressStatusText.textContent = `Uploading document to server (${upPct}%)...`;
                     if (progressMetaText) progressMetaText.textContent = `${loadedMb} / ${totalMb} MB`;
                 }
             };
 
             xhr.onload = () => {
                 if (xhr.status === 200) {
-                    const uploadRes = JSON.parse(xhr.responseText);
-                    if (uploadRes.success && uploadRes.session_id) {
-                        startProcessingStream(uploadRes.session_id);
-                    } else {
-                        alert(`Upload failed: ${uploadRes.error || 'Unknown error'}`);
-                        resetProgress();
+                    try {
+                        const uploadRes = JSON.parse(xhr.responseText);
+                        if (uploadRes.success && uploadRes.session_id) {
+                            startProcessingStream(uploadRes.session_id);
+                        } else {
+                            fallbackDirectProcessing();
+                        }
+                    } catch (e) {
+                        fallbackDirectProcessing();
                     }
                 } else {
-                    alert(`Upload error: Server responded with status ${xhr.status}`);
-                    resetProgress();
+                    fallbackDirectProcessing();
                 }
             };
 
             xhr.onerror = () => {
-                alert("Upload failed due to network error.");
-                resetProgress();
+                fallbackDirectProcessing();
             };
 
             xhr.open('POST', '/api/upload', true);
             xhr.send(formData);
+        });
+    }
+
+    function fallbackDirectProcessing() {
+        if (progressStatusText) progressStatusText.textContent = 'Processing document directly via OCR engine...';
+        if (progressBarFill) progressBarFill.style.width = '50%';
+        if (progressPercent) progressPercent.textContent = '50%';
+
+        const lang = langSelect ? langSelect.value : 'kan+eng';
+        const dpi = dpiSelect ? dpiSelect.value : 300;
+
+        const formData = new FormData();
+        formData.append('file', selectedFile);
+        formData.append('lang', lang);
+        formData.append('dpi', dpi);
+
+        fetch('/api/process-document', {
+            method: 'POST',
+            body: formData
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.error) {
+                alert(`Processing failed: ${data.error}`);
+                resetProgress();
+            } else {
+                if (progressPercent) progressPercent.textContent = '100%';
+                if (progressBarFill) progressBarFill.style.width = '100%';
+                setTimeout(() => {
+                    resetProgress();
+                    renderDocumentResults(data);
+                }, 300);
+            }
+        })
+        .catch(err => {
+            alert(`Document processing error: ${err.message || err}`);
+            resetProgress();
         });
     }
 
@@ -364,39 +467,41 @@ function initDocumentUpload() {
 
         if (progressStageBadge) progressStageBadge.textContent = 'Processing';
         if (progressStatusText) progressStatusText.textContent = 'Connecting to OCR engine pipeline...';
-        if (progressBarFill) progressBarFill.style.width = '15%';
+        if (progressBarFill) progressBarFill.style.width = '20%';
 
         if (activeEventSource) {
             activeEventSource.close();
         }
 
+        let streamReceivedAny = false;
         activeEventSource = new EventSource(`/api/process-stream/${sessionId}?lang=${encodeURIComponent(lang)}&dpi=${encodeURIComponent(dpi)}`);
 
         activeEventSource.onmessage = (e) => {
+            streamReceivedAny = true;
             try {
                 const event = JSON.parse(e.data);
 
                 if (event.stage === 'inspecting') {
                     if (progressStageBadge) progressStageBadge.textContent = 'Inspecting';
-                    if (progressBarFill) progressBarFill.style.width = '20%';
-                    if (progressPercent) progressPercent.textContent = '20%';
+                    if (progressBarFill) progressBarFill.style.width = '25%';
+                    if (progressPercent) progressPercent.textContent = '25%';
                     if (progressStatusText) progressStatusText.textContent = event.message || 'Analyzing document layout...';
                 } else if (event.stage === 'rasterizing') {
                     if (progressStageBadge) progressStageBadge.textContent = 'Rasterizing';
-                    if (progressBarFill) progressBarFill.style.width = '25%';
-                    if (progressPercent) progressPercent.textContent = '25%';
+                    if (progressBarFill) progressBarFill.style.width = '35%';
+                    if (progressPercent) progressPercent.textContent = '35%';
                     if (progressStatusText) progressStatusText.textContent = event.message || 'Rendering high-DPI page sheets...';
                 } else if (event.stage === 'ocr') {
                     if (progressStageBadge) progressStageBadge.textContent = 'OCR Engine';
-                    const pct = Math.max(25, Math.min(event.percent || 50, 85));
+                    const pct = Math.max(35, Math.min(event.percent || 50, 85));
                     if (progressBarFill) progressBarFill.style.width = `${pct}%`;
                     if (progressPercent) progressPercent.textContent = `${pct}%`;
                     if (progressStatusText) progressStatusText.textContent = event.message || `OCR Processing Page ${event.current_page || 1}...`;
                     if (progressMetaText) progressMetaText.textContent = `Page ${event.current_page || 1} of ${event.total_pages || 1}`;
                 } else if (event.stage === 'extracting') {
                     if (progressStageBadge) progressStageBadge.textContent = 'Extracting';
-                    if (progressBarFill) progressBarFill.style.width = '50%';
-                    if (progressPercent) progressPercent.textContent = '50%';
+                    if (progressBarFill) progressBarFill.style.width = '60%';
+                    if (progressPercent) progressPercent.textContent = '60%';
                     if (progressStatusText) progressStatusText.textContent = event.message || 'Extracting digital vector layout...';
                 } else if (event.stage === 'correcting') {
                     if (progressStageBadge) progressStageBadge.textContent = 'Correcting';
@@ -416,7 +521,7 @@ function initDocumentUpload() {
                 } else if (event.stage === 'complete' && event.payload) {
                     if (progressPercent) progressPercent.textContent = '100%';
                     if (progressBarFill) progressBarFill.style.width = '100%';
-                    if (progressStatusText) progressStatusText.textContent = 'Done!';
+                    if (progressStatusText) progressStatusText.textContent = 'Complete ✓';
                     activeEventSource.close();
                     setTimeout(() => {
                         resetProgress();
@@ -424,16 +529,18 @@ function initDocumentUpload() {
                     }, 400);
                 } else if (event.stage === 'error') {
                     activeEventSource.close();
-                    alert(`Pipeline error: ${event.message || event.error}`);
-                    resetProgress();
+                    fallbackDirectProcessing();
                 }
             } catch (err) {
                 console.error("SSE parse error:", err);
             }
         };
 
-        activeEventSource.onerror = (err) => {
-            console.error("SSE connection error:", err);
+        activeEventSource.onerror = () => {
+            if (!streamReceivedAny) {
+                activeEventSource.close();
+                fallbackDirectProcessing();
+            }
         };
     }
 

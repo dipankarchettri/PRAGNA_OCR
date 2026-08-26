@@ -171,4 +171,7 @@ def ocr_image_with_layout(
             'page_num': page_num
         })
 
+    # Sort layout lines top-to-bottom with baseline tolerance to maintain natural reading order
+    layout_lines.sort(key=lambda l: (round(l['top'] / 12.0), l['left']))
+
     return layout_lines
