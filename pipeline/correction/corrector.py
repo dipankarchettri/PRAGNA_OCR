@@ -1,15 +1,80 @@
 """
 Main Kannada Autocorrect & Post-OCR Correction Engine
-Combines: OCR Rule Repairs -> Morphological Decomposition -> Compound Word (Samasa) Verification -> Safe Conservative Normalization
+Combines: Unicode Glitch Cleaning -> Space Healing -> Safe Rule Repairs -> Dictionary-Gated Optical Normalization
 """
 
-from typing import Dict, List, Tuple, Any, Optional
+import re
+from typing import Dict, List, Tuple, Any, Optional, Set
 from .dictionary import get_dictionary, get_word_list, load_dictionary
 from .tokenizer import tokenize, reconstruct
 from .edit_distance import weighted_edit_distance
 from .morphology import decompose_word, join_root_suffix, is_compound_word, SUFFIXES
-from .ocr_repairs import apply_ocr_repairs
+from .ocr_repairs import apply_ocr_repairs, clean_unicode_glitches
 from .ngram import train_model, score_candidate
+
+# Strict protected tokens that should never be fused or altered
+PROTECTED_TOKENS = {'ಶ್ರೀ', 'ಡಾ', 'ಪ್ರೊ', 'ಆ', 'ಈ', 'ಏ', 'ಮತ್ತು', 'ಹಾಗೂ', 'ಅಥವಾ', 'ಎಂದು', 'ಎಂಬ', 'ಒಂದು', 'ಆಗಿದೆ', 'ಆಗಿದ್ದಾರೆ', 'ಆಗುವುದು', 'ಆಗಿದೆ.', 'ಇದೆ', 'ಇದು'}
+
+
+
+def heal_split_tokens(tokens: List[Dict[str, Any]], dictionary: Set[str]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """
+    Intelligently heal broken intra-word spaces caused by OCR segmentation gaps.
+    e.g. ಹಿನ್ನೆ + ಲೆಯಲ್ಲಿ -> ಹಿನ್ನೆಲೆಯಲ್ಲಿ, ಸಾಧ್ಯ + ವಾಗಬೇಕಿದೆ -> ಸಾಧ್ಯವಾಗಬೇಕಿದೆ
+    """
+    if len(tokens) < 3:
+        return tokens, []
+
+    healed_corrections = []
+    new_tokens = []
+    i = 0
+
+    while i < len(tokens):
+        # Look for pattern: KannadaToken + single space + KannadaToken
+        if (i + 2 < len(tokens) and 
+            tokens[i]['type'] == 'kannada' and 
+            tokens[i+1]['value'] == ' ' and 
+            tokens[i+2]['type'] == 'kannada'):
+            
+            w1 = tokens[i]['value']
+            w2 = tokens[i+2]['value']
+
+            if w1 not in PROTECTED_TOKENS and w2 not in PROTECTED_TOKENS:
+                joined = w1 + w2
+                should_join = False
+
+                # Case A: Second word is a known suffix fragment
+                if w2 in SUFFIXES or w2.startswith(('ವಾಗಿ', 'ವಾಗಲು', 'ವಾಗುವುದು', 'ವಾಗಬೇಕಿದೆ', 'ವಾಗಿದೆ', 'ವಾಗುತ್ತದೆ')):
+                    should_join = True
+                # Case B: First word is not a valid word, but joined form IS a valid dictionary word
+                elif w1 not in dictionary and (joined in dictionary or decompose_word(joined, dictionary)[0] is not None):
+                    should_join = True
+                # Case C: Joint compound word is in dictionary
+                elif joined in dictionary:
+                    should_join = True
+
+                if should_join:
+                    healed_corrections.append({
+                        'original': f"{w1} {w2}",
+                        'correction': joined,
+                        'edit_distance': 0.5,
+                        'start': tokens[i]['start'],
+                        'end': tokens[i+2]['end']
+                    })
+                    merged_tok = {
+                        'value': joined,
+                        'type': 'kannada',
+                        'start': tokens[i]['start'],
+                        'end': tokens[i+2]['end']
+                    }
+                    new_tokens.append(merged_tok)
+                    i += 3
+                    continue
+
+        new_tokens.append(tokens[i])
+        i += 1
+
+    return new_tokens, healed_corrections
 
 
 def suggest_kannada_word(word: str, prev_word: Optional[str] = None, next_word: Optional[str] = None) -> Tuple[str, float]:
@@ -39,12 +104,11 @@ def suggest_kannada_word(word: str, prev_word: Optional[str] = None, next_word: 
         # Otherwise, the original surface word is already a valid inflected form
         return word, 0.0
 
-
     # 4. Compound Word (Samasa) validation (e.g., ಸಂತಕವಿ, ಸಹಕಾರ, ಕನಕದಾಸರು, ಮರುಓದಿಗೆ)
     if is_compound_word(word, dictionary):
         return word, 0.0
 
-    # 5. Rule-based OCR Repairs (Missing Halant/Virama, vowel sign optical errors, rephas)
+    # 5. Targeted Rule-based OCR Repairs (Optical confusion, Halant/Virama, rephas)
     repaired = apply_ocr_repairs(word, dictionary)
     if repaired != word:
         if repaired in dictionary or is_compound_word(repaired, dictionary):
@@ -62,16 +126,22 @@ def suggest_kannada_word(word: str, prev_word: Optional[str] = None, next_word: 
 def correct_text(text: str) -> Dict[str, Any]:
     """
     Correct a full block of mixed Kannada text.
-    Returns structured results with list of detailed corrections.
+    Combines Unicode normalization, space healing, and targeted optical OCR repairs.
     """
     dictionary = get_dictionary()
     if not dictionary:
         load_dictionary()
         train_model(get_word_list())
 
-    tokens = tokenize(text)
-    corrections = []
+    # Pre-pass: clean Unicode zero-digit / anusvara scanning artifacts
+    pre_cleaned = clean_unicode_glitches(text)
 
+    tokens = tokenize(pre_cleaned)
+
+    # Pre-pass 2: Heal split word gaps
+    tokens, space_corrections = heal_split_tokens(tokens, dictionary)
+
+    corrections = list(space_corrections)
     kannada_tokens = [t for t in tokens if t['type'] == 'kannada']
     kannada_count = len(kannada_tokens)
 
