@@ -78,50 +78,55 @@ def heal_split_tokens(tokens: List[Dict[str, Any]], dictionary: Set[str]) -> Tup
     return new_tokens, healed_corrections
 
 
-def suggest_kannada_word(word: str, prev_word: Optional[str] = None, next_word: Optional[str] = None) -> Tuple[str, float]:
+def suggest_kannada_word(word: str, prev_word: Optional[str] = None, next_word: Optional[str] = None) -> Tuple[str, float, str]:
     """
     Find best correction suggestion for a single Kannada word.
-    Guaranteed not to corrupt valid proper nouns, compounds, or literary terms.
+    Returns: (corrected_word, edit_distance, correction_type)
+    Types: 'ocr_repair' (Blue), 'word_correction' (Green), 'hybrid' (Yellow), 'none'
     """
     dictionary = get_dictionary()
 
     if not dictionary:
-        return word, 0.0
+        return word, 0.0, 'none'
 
     # 1. Single character or short initials (e.g. ಶ್ರೀ, ಡಾ, ಎ, ವಿ, ಎಸ್) - never corrupt
     if len(word) <= 1:
-        return word, 0.0
+        return word, 0.0, 'none'
 
     # 2. Exact match in dictionary
     if word in dictionary:
-        return word, 0.0
+        return word, 0.0, 'none'
 
     # 3. Direct morphological decomposition (root + valid Kannada suffix)
     root, suf = decompose_word(word, dictionary)
     if root is not None:
-        # If the word ended in a broken suffix like ುತದೆ, normalize it
+        # If the word ended in a broken suffix like ುತದೆ, normalize it (Word/Grammar correction)
         if suf == 'ಿಸುತ್ತದೆ' and word.endswith(('ುತದೆ', 'ಸುತದೆ')):
-            return join_root_suffix(root, suf), 0.5
+            return join_root_suffix(root, suf), 0.5, 'word_correction'
         # Otherwise, the original surface word is already a valid inflected form
-        return word, 0.0
+        return word, 0.0, 'none'
 
     # 4. Compound Word (Samasa) validation (e.g., ಸಂತಕವಿ, ಸಹಕಾರ, ಕನಕದಾಸರು, ಮರುಓದಿಗೆ)
     if is_compound_word(word, dictionary):
-        return word, 0.0
+        return word, 0.0, 'none'
 
     # 5. Targeted Rule-based OCR Repairs (Optical confusion, Halant/Virama, rephas)
     repaired = apply_ocr_repairs(word, dictionary)
     if repaired != word:
-        if repaired in dictionary or is_compound_word(repaired, dictionary):
-            return repaired, 0.5
+        # Check if repaired word also has a morphological suffix normalization
         rep_root, rep_suf = decompose_word(repaired, dictionary)
         if rep_root is not None:
-            return join_root_suffix(rep_root, rep_suf), 0.5
-        # If repaired form is cleaner than original
-        return repaired, 0.5
+            if rep_suf == 'ಿಸುತ್ತದೆ' and repaired.endswith(('ುತದೆ', 'ಸುತದೆ')):
+                return join_root_suffix(rep_root, rep_suf), 0.5, 'hybrid' # Both OCR repair + Word correction
+            return join_root_suffix(rep_root, rep_suf), 0.5, 'ocr_repair'
+
+        if repaired in dictionary or is_compound_word(repaired, dictionary):
+            return repaired, 0.5, 'ocr_repair'
+
+        return repaired, 0.5, 'ocr_repair'
 
     # 6. Default Safe Fallback: Preserve original OCR text without corrupting
-    return word, 0.0
+    return word, 0.0, 'none'
 
 
 def correct_text(text: str) -> Dict[str, Any]:
@@ -139,8 +144,10 @@ def correct_text(text: str) -> Dict[str, Any]:
 
     tokens = tokenize(pre_cleaned)
 
-    # Pre-pass 2: Heal split word gaps
+    # Pre-pass 2: Heal split word gaps (Treated as OCR repairs)
     tokens, space_corrections = heal_split_tokens(tokens, dictionary)
+    for sc in space_corrections:
+        sc['type'] = 'ocr_repair'
 
     corrections = list(space_corrections)
     kannada_tokens = [t for t in tokens if t['type'] == 'kannada']
@@ -165,17 +172,19 @@ def correct_text(text: str) -> Dict[str, Any]:
                 next_kannada = next_t['value']
                 break
 
-        corrected_word, dist = suggest_kannada_word(orig_word, prev_kannada, next_kannada)
+        corrected_word, dist, corr_type = suggest_kannada_word(orig_word, prev_kannada, next_kannada)
 
-        if corrected_word != orig_word:
+        if corrected_word != orig_word and corr_type != 'none':
             corrections.append({
                 'original': orig_word,
                 'correction': corrected_word,
                 'edit_distance': round(dist, 2),
+                'type': corr_type, # 'ocr_repair' (Blue), 'word_correction' (Green), or 'hybrid' (Yellow)
                 'start': token['start'],
                 'end': token['end']
             })
             token['value'] = corrected_word
+
 
     corrected_text = reconstruct(tokens)
     return {

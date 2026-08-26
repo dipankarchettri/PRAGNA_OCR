@@ -74,7 +74,13 @@
                 </div>
             </div>
 
-            <!-- Split Canvas -->
+            <!-- Side by Side Canvas -->
+            <div class="diff-legend-bar">
+                <span class="legend-item"><span class="legend-dot blue"></span> <strong>Blue:</strong> OCR Optical Repair</span>
+                <span class="legend-item"><span class="legend-dot green"></span> <strong>Green:</strong> Word / Grammar Correction</span>
+                <span class="legend-item"><span class="legend-dot yellow"></span> <strong>Yellow:</strong> Dual Repair (OCR + Word)</span>
+            </div>
+
             <div class="editor-canvas-grid">
                 <!-- Input Canvas -->
                 <div class="editor-pane">
@@ -232,6 +238,13 @@
                         </div>
                     </div>
 
+                    <!-- Legend Bar for Document Results -->
+                    <div class="diff-legend-bar">
+                        <span class="legend-item"><span class="legend-dot blue"></span> <strong>Blue:</strong> OCR Optical Repair</span>
+                        <span class="legend-item"><span class="legend-dot green"></span> <strong>Green:</strong> Word / Grammar Correction</span>
+                        <span class="legend-item"><span class="legend-dot yellow"></span> <strong>Yellow:</strong> Dual Repair (OCR + Word)</span>
+                    </div>
+
                     <!-- Side by Side Diff Canvas -->
                     <div class="editor-canvas-grid">
                         <div class="editor-pane">
@@ -254,15 +267,17 @@
                         <table class="apple-table">
                             <thead>
                                 <tr>
-                                    <th style="width: 70px;">#</th>
+                                    <th style="width: 60px;">#</th>
                                     <th>Raw Optical OCR Token</th>
                                     <th>Corrected Kannada Word</th>
+                                    <th>Classification</th>
                                     <th>Edit Distance</th>
                                 </tr>
                             </thead>
                             <tbody id="docCorrectionsTableBody"></tbody>
                         </table>
                     </div>
+
                 </div>
             </div>
         </section>

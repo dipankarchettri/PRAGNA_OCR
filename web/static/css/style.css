@@ -399,16 +399,112 @@ body {
   color: var(--text-tertiary);
 }
 
-/* Diff Pill */
+/* Multi-Tier Diff Highlight Pills (Blue = OCR Repair, Green = Word Correction, Yellow = Both) */
 mark.apple-diff-pill {
-  background: rgba(48, 209, 88, 0.15);
-  color: #30D158;
-  border: 1px solid rgba(48, 209, 88, 0.3);
-  padding: 1px 5px;
+  padding: 1px 6px;
   border-radius: var(--radius-xs);
   font-weight: 600;
   text-decoration: none;
+  display: inline-block;
+  line-height: 1.4;
+  margin: 0 1px;
 }
+
+mark.apple-diff-pill.diff-blue,
+mark.apple-diff-pill.type-ocr_repair {
+  background: rgba(10, 132, 255, 0.18);
+  color: #409CFF;
+  border: 1px solid rgba(10, 132, 255, 0.45);
+  box-shadow: 0 0 8px rgba(10, 132, 255, 0.15);
+}
+
+mark.apple-diff-pill.diff-green,
+mark.apple-diff-pill.type-word_correction {
+  background: rgba(48, 209, 88, 0.18);
+  color: #30D158;
+  border: 1px solid rgba(48, 209, 88, 0.45);
+  box-shadow: 0 0 8px rgba(48, 209, 88, 0.15);
+}
+
+mark.apple-diff-pill.diff-yellow,
+mark.apple-diff-pill.type-hybrid {
+  background: rgba(255, 214, 10, 0.18);
+  color: #FFD60A;
+  border: 1px solid rgba(255, 214, 10, 0.45);
+  box-shadow: 0 0 8px rgba(255, 214, 10, 0.15);
+}
+
+/* ── Diff Color Legend Bar ── */
+.diff-legend-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 14px;
+  background: rgba(24, 24, 28, 0.6);
+  border: 1px solid var(--apple-border-subtle);
+  border-radius: var(--radius-sm);
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.legend-dot.blue {
+  background: #409CFF;
+  box-shadow: 0 0 6px #409CFF;
+}
+
+.legend-dot.green {
+  background: #30D158;
+  box-shadow: 0 0 6px #30D158;
+}
+
+.legend-dot.yellow {
+  background: #FFD60A;
+  box-shadow: 0 0 6px #FFD60A;
+}
+
+/* ── Tag Badges for Table ── */
+.tag-badge {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: var(--radius-xs);
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-sf);
+  letter-spacing: 0.02em;
+}
+
+.tag-badge.blue {
+  background: rgba(10, 132, 255, 0.15);
+  color: #409CFF;
+  border: 1px solid rgba(10, 132, 255, 0.3);
+}
+
+.tag-badge.green {
+  background: rgba(48, 209, 88, 0.15);
+  color: #30D158;
+  border: 1px solid rgba(48, 209, 88, 0.3);
+}
+
+.tag-badge.yellow {
+  background: rgba(255, 214, 10, 0.15);
+  color: #FFD60A;
+  border: 1px solid rgba(255, 214, 10, 0.3);
+}
+
 
 /* ── Apple Action Buttons (Reduced Radii) ── */
 .apple-btn {

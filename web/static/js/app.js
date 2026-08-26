@@ -90,6 +90,33 @@ function initLiveAutocorrect() {
         }
     }
 
+    function getDiffClass(type) {
+        if (type === 'hybrid') return 'diff-yellow';
+        if (type === 'ocr_repair') return 'diff-blue';
+        return 'diff-green';
+    }
+
+    function getTypeBadge(type) {
+        if (type === 'hybrid') return '<span class="tag-badge yellow">Dual (OCR + Word)</span>';
+        if (type === 'ocr_repair') return '<span class="tag-badge blue">OCR Glyph Repair</span>';
+        return '<span class="tag-badge green">Word Correction</span>';
+    }
+
+    function highlightCorrectedHtml(text, corrections) {
+        let html = escapeHtml(text || '');
+        if (!corrections || corrections.length === 0) return html;
+        corrections.forEach(c => {
+            if (c.correction && c.original && c.correction !== c.original) {
+                const diffClass = getDiffClass(c.type);
+                const escapedCorr = escapeHtml(c.correction);
+                const escapedOrig = escapeHtml(c.original);
+                const reg = new RegExp(`(${escapedCorr})`, 'g');
+                html = html.replace(reg, `<mark class="apple-diff-pill ${diffClass}" title="Original: ${escapedOrig} [${c.type || 'repaired'}]">$1</mark>`);
+            }
+        });
+        return html;
+    }
+
     function renderLiveResults(data) {
         latestCorrectedText = data.corrected;
         statWords.textContent = data.total_words || 0;
@@ -97,31 +124,25 @@ function initLiveAutocorrect() {
         statAccuracy.textContent = `${data.accuracy_rate || 100}%`;
         statLatency.textContent = `${data.latency_seconds || 0}s`;
 
-        // Highlight corrections in the output display
-        let highlighted = escapeHtml(data.corrected);
-        if (data.corrections && data.corrections.length > 0) {
-            data.corrections.forEach(c => {
-                const escapedCorr = escapeHtml(c.correction);
-                const reg = new RegExp(`(${escapedCorr})`, 'g');
-                highlighted = highlighted.replace(reg, `<mark class="apple-diff-pill" title="Original: ${escapeHtml(c.original)}">$1</mark>`);
-            });
-        }
-        correctedDisplay.innerHTML = highlighted;
+        // 3-color Highlight (Blue = OCR repair, Green = Word correction, Yellow = Both)
+        correctedDisplay.innerHTML = highlightCorrectedHtml(data.corrected, data.corrections);
 
-        // Render Table
+        // Render Table with Classification Badges
         if (data.corrections && data.corrections.length > 0) {
             tableBody.innerHTML = data.corrections.map((c, idx) => `
                 <tr>
                     <td style="font-family: var(--font-mono); color: var(--text-tertiary); font-size: 13px;">${idx + 1}</td>
                     <td class="tag-red-strike">${escapeHtml(c.original)}</td>
                     <td class="tag-green-bold">${escapeHtml(c.correction)}</td>
+                    <td>${getTypeBadge(c.type)}</td>
                     <td style="font-family: var(--font-mono); color: var(--text-secondary); font-size: 13px;">${c.edit_distance}</td>
                 </tr>
             `).join('');
         } else {
-            tableBody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--apple-emerald); padding: 24px; font-weight: 500;">✓ Perfect match! All Kannada words are valid & clean.</td></tr>';
+            tableBody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--apple-emerald); padding: 24px; font-weight: 500;">✓ Perfect match! All Kannada words are valid & clean.</td></tr>';
         }
     }
+
 
     if (copyBtn) {
         copyBtn.addEventListener('click', () => {
@@ -390,41 +411,32 @@ function initDocumentUpload() {
 
         docRawDisplay.textContent = data.raw_text || '(No text extracted)';
 
-        // Highlight corrections with green diff pills in the output display
+        // 3-color Highlight (Blue = OCR repair, Green = Word correction, Yellow = Both)
         const corrections = (data.result && data.result.corrections_summary) ? data.result.corrections_summary : [];
-        let highlighted = escapeHtml(data.corrected_text || '');
-        if (corrections.length > 0) {
-            corrections.forEach(c => {
-                if (c.correction && c.original && c.correction !== c.original) {
-                    const escapedCorr = escapeHtml(c.correction);
-                    const escapedOrig = escapeHtml(c.original);
-                    const reg = new RegExp(`(${escapedCorr})`, 'g');
-                    highlighted = highlighted.replace(reg, `<mark class="apple-diff-pill" title="Original OCR: ${escapedOrig}">$1</mark>`);
-                }
-            });
-        }
-        docCorrectedDisplay.innerHTML = highlighted || '(No text extracted)';
+        docCorrectedDisplay.innerHTML = highlightCorrectedHtml(data.corrected_text, corrections) || '(No text extracted)';
 
         btnDownloadPdf.href = data.download_urls.pdf;
         btnDownloadTxt.href = data.download_urls.txt;
         btnDownloadJson.href = data.download_urls.json;
 
-        // Render detailed corrections
+        // Render detailed corrections with Classification Badges
         if (corrections.length > 0) {
             docCorrectionsTableBody.innerHTML = corrections.map((c, idx) => `
                 <tr>
                     <td style="font-family: var(--font-mono); color: var(--text-tertiary); font-size: 13px;">${idx + 1}</td>
                     <td class="tag-red-strike">${escapeHtml(c.original)}</td>
                     <td class="tag-green-bold">${escapeHtml(c.correction)}</td>
+                    <td>${getTypeBadge(c.type)}</td>
                     <td style="font-family: var(--font-mono); color: var(--text-secondary); font-size: 13px;">${c.edit_distance}</td>
                 </tr>
             `).join('');
         } else {
-            docCorrectionsTableBody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--apple-emerald); padding: 24px; font-weight: 500;">✓ Document text is completely clean! No corrections were required.</td></tr>';
+            docCorrectionsTableBody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--apple-emerald); padding: 24px; font-weight: 500;">✓ Document text is completely clean! No corrections were required.</td></tr>';
         }
 
         docResultsCard.scrollIntoView({ behavior: 'smooth' });
     }
+
 
 }
 
