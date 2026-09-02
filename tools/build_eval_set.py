@@ -213,11 +213,41 @@ def render_page(page_lines, header: str, page_no: int, font, header_font):
 # or phone capture actually introduces. The parameters are a plausible ladder,
 # not a fit to measured scanner output; see the honesty note above.
 
+# Calibrated against measured Tesseract CER, not chosen by eye. The previous
+# ladder looked severe (blur, noise, JPEG at quality 55) and did essentially
+# nothing: level 3 measured CER 0.0050 against a level-0 baseline of 0.0047, so
+# the whole "CER curve against degradation level" the ladder exists to produce
+# was flat, and any Phase 4 OCR change gated on it would have been unmeasurable.
+#
+# THE IMPORTANT FINDING, and a real limitation of this whole fixture set:
+# Tesseract on clean typeset Kannada is close to binary. It reads near
+# perfectly until effective resolution collapses, then falls off a cliff --
+# measured on the same pages, varying only downscale:
+#
+#     downscale   0.60    0.52    0.50    0.48    0.47    0.46    0.44    0.42
+#     CER       0.0066  0.0051  0.0053  0.0089  0.0201  0.0337  0.2829  0.7225
+#
+# Between 0.46 and 0.44 the engine goes from 3% to 28% character error. There
+# is no broad middle band to sample, because these pages carry no imperfection
+# except the ones this function adds: real scans degrade gradually because the
+# glyph shapes themselves are damaged (bleed-through, paper texture, worn type,
+# uneven inking), not merely undersampled. Blur, noise and JPEG barely move the
+# number at all; resolution is the only lever with real authority here.
+#
+# So the levels below are picked to sit on the usable side of that cliff, and
+# level 3 -- the only one that produces a meaningful error rate -- is at 0.46,
+# where CER measured mean 0.0337 across 10 pages (range 0.0219-0.0561). Do not
+# push past 0.45: pages start collapsing entirely, which pollutes the metric
+# with garbage rather than making it harder.
+#
+# The honest consequence: this ladder is a regression gate, not evidence about
+# scanner quality, and it cannot settle questions that need realistic OCR error
+# distributions. Real page/transcript pairs remain the only thing that can.
 DEGRADE_LEVELS = {
     0: {},
-    1: {'blur': 0.4, 'noise': 3.0, 'jpeg': 88, 'skew': 0.4, 'illum': 0.10},
-    2: {'blur': 0.8, 'noise': 7.0, 'jpeg': 72, 'skew': 1.2, 'illum': 0.22},
-    3: {'blur': 1.3, 'noise': 13.0, 'jpeg': 55, 'skew': 2.5, 'illum': 0.35, 'downscale': 0.72},
+    1: {'blur': 1.3, 'noise': 13.0, 'jpeg': 52, 'skew': 2.2, 'illum': 0.30, 'downscale': 0.52},
+    2: {'blur': 1.5, 'noise': 15.0, 'jpeg': 48, 'skew': 2.5, 'illum': 0.34, 'downscale': 0.48},
+    3: {'blur': 1.6, 'noise': 16.0, 'jpeg': 45, 'skew': 2.5, 'illum': 0.35, 'downscale': 0.46},
 }
 
 

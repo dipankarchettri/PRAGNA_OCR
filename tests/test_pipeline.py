@@ -114,6 +114,53 @@ class TestKannadaPipeline(unittest.TestCase):
         self.assertGreater(os.path.getsize(out), 500)
 
 
+class TestAksharaSegmentation(unittest.TestCase):
+    """
+    Edit distance and candidate generation both count aksharas now, not code
+    points. Two properties have to hold for that to be safe.
+    """
+
+    def test_clusters_never_start_with_a_combining_mark(self):
+        """
+        The reason candidate generation moved to clusters at all: slicing by
+        code point could strip a base consonant and leave its matra stranded,
+        producing strings no OCR engine could emit.
+        """
+        from pipeline.correction.graphemes import aksharas, COMBINING_MARKS
+
+        for word in ('ಕಾಫಿ', 'ಶಿಕ್ಷಣವು', 'ವ್ಯಕ್ತಿಯ', 'ಜೀವನದಲ್ಲಿ', 'ಕರ್ನಾಟಕ',
+                     'ಪ್ರತಿಯೊಬ್ಬ', 'ಸಂಜೆ'):
+            with self.subTest(word=word):
+                clusters = aksharas(word)
+                self.assertEqual(''.join(clusters), word, 'segmentation lost text')
+                for cl in clusters:
+                    self.assertNotIn(cl[0], COMBINING_MARKS,
+                                     f'cluster {cl!r} starts with a combining mark')
+
+    def test_one_misread_syllable_costs_about_one_edit(self):
+        """
+        ಕಿ -> ಖೀ is a single wrong glyph but two code-point substitutions. Under
+        the old metric it cost ~2.0 and so exhausted MAX_CORRECTION_EDIT_DISTANCE
+        by itself; a correction needing it could never be accepted.
+        """
+        from pipeline.correction.corrector import MAX_CORRECTION_EDIT_DISTANCE
+
+        self.assertLessEqual(weighted_edit_distance('ಕಿ', 'ಖೀ'),
+                             MAX_CORRECTION_EDIT_DISTANCE)
+
+    def test_multi_character_confusion_pairs_are_priced(self):
+        """
+        _sub_cost only ever compared single code points, so the multi-character
+        rows of CONFUSION_PAIRS were unreachable from the verifier: the
+        generator offered ಸ್ಮ -> ಷ್ಮ at 0.20 while the verifier scored the same
+        edit near 2.0 and could reject it outright.
+        """
+        for a, b in (('ಸ್ಮ', 'ಷ್ಮ'), ('ದ್ವ', 'ಧ್ವ')):
+            with self.subTest(pair=(a, b)):
+                self.assertLess(weighted_edit_distance(a, b), 1.0,
+                                'multi-character confusion still priced as unrelated')
+
+
 class TestSuffixBucketing(unittest.TestCase):
     """
     decompose_word finds the longest suffix a word ends with. It used to scan

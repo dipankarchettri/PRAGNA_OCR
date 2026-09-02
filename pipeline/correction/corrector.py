@@ -8,6 +8,7 @@ from typing import Dict, List, Tuple, Any, Optional, Set
 from .dictionary import get_dictionary, get_word_list, load_dictionary, is_correction_target
 from .tokenizer import tokenize, reconstruct
 from .edit_distance import weighted_edit_distance, GLYPH_CONFUSIONS
+from .graphemes import aksharas
 from .morphology import (
     decompose_word,
     join_root_suffix,
@@ -100,7 +101,22 @@ KANNADA_CONSONANTS = set('ಕಖಗಘಙಚಛಜಝಞಟಠಡಢಣತಥದ
 KANNADA_VOWEL_SIGNS = 'ಾಿೀುೂೃೆೇೈೊೋೌಂ್'
 
 # Reject a correction if its true weighted edit distance from the
-# script-normalized word exceeds this. Measured from the *normalized* form
+# script-normalized word exceeds this.
+#
+# NOW DENOMINATED IN AKSHARAS, NOT CODE POINTS -- weighted_edit_distance
+# changed units, so the old value of 2.0 does not carry over and was re-swept.
+# 1.0 means "at most one visibly wrong glyph", which is what this constant was
+# always trying to express: a single misread akshara ಕಿ -> ಖೀ is two code-point
+# substitutions, so under the old metric it already exhausted the entire budget
+# and a second real error could never be tolerated.
+#
+# Swept {0.75, 1.0, 1.5, 2.0} over all three benches. Above 1.0 the gate is
+# inert -- cluster costs put essentially every candidate below it -- and 0.75
+# loses the genuine fixes on both real-OCR page sets (clean 3 -> 2, degraded
+# 2 -> 1) to buy a slightly better synthetic CER. 1.0 is the largest value
+# that still constrains anything and the best on both real-page sets.
+#
+# Measured from the *normalized* form
 # (post Repha/zero-anusvara/illegal-vowel cleanup), not the raw OCR token,
 # because normalize_script's own deterministic repairs can legitimately
 # span several raw character positions (e.g. one Repha digit standing in
@@ -112,7 +128,7 @@ KANNADA_VOWEL_SIGNS = 'ಾಿೀುೂೃೆೇೈೊೋೌಂ್'
 # an unrelated word that happens to be reachable via a low base-cost
 # generation step (e.g. an out-of-vocabulary proper noun with no dictionary
 # entry) -- forcing it on is worse than leaving the OCR text untouched.
-MAX_CORRECTION_EDIT_DISTANCE = 2.0
+MAX_CORRECTION_EDIT_DISTANCE = 1.0
 
 
 def heal_split_tokens(tokens: List[Dict[str, Any]], dictionary: Set[str]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
@@ -436,12 +452,30 @@ def collect_kannada_candidates(
     # suggest_kannada_word can require actual bigram context support for
     # just these two mechanisms, not the higher-precision ones below.
     if len(w) >= 3:
-        # Single character deletion
-        for i in range(len(w)):
-            cand = w[:i] + w[i+1:]
+        ax = aksharas(w)
+
+        # Whole-akshara deletion (a spurious glyph read out of a speckle).
+        # Deleting a *code point* here used to be able to remove a base
+        # consonant and leave its matra stranded -- "ಕಾಫಿ" minus code point 0
+        # is "ಾಫಿ", which no OCR engine could have produced and no dictionary
+        # can contain. Those lookups were pure waste.
+        for i in range(len(ax)):
+            cand = ''.join(ax[:i] + ax[i+1:])
             res, _fuzzy = resolve_valid_surface_form(cand, dictionary)
             if res:
                 candidates.append((res, 0.40, 'word_correction_unconstrained'))
+
+        # Dependent-sign removal: keep the akshara's base, drop the marks
+        # hanging off it. This is the other half of what code-point deletion
+        # used to cover -- a speckle misread as a matra, or a spurious virama
+        # splitting a consonant -- but expressed so the result is always a
+        # well-formed cluster.
+        for i, cl in enumerate(ax):
+            if len(cl) > 1:
+                cand = ''.join(ax[:i] + [cl[0]] + ax[i+1:])
+                res, _fuzzy = resolve_valid_surface_form(cand, dictionary)
+                if res:
+                    candidates.append((res, 0.40, 'word_correction_unconstrained'))
 
         # Terminal single-character insertion (handles truncated word endings)
         for ch in KANNADA_CONSONANTS:
@@ -450,13 +484,34 @@ def collect_kannada_candidates(
             if res:
                 candidates.append((res, 0.35, 'word_correction_unconstrained'))
 
-        # Vowel-sign (matra) insertion at any position (handles a dropped
-        # diacritic anywhere in the word, e.g. a missing terminal locative
-        # ಿ or a missing mid-word ೆ) -- these are optically tiny marks and
-        # the single most common thing OCR silently loses.
-        for i in range(len(w) + 1):
+        # Dropped diacritic: attach a vowel sign to an akshara. These are
+        # optically tiny marks and the single most common thing OCR silently
+        # loses.
+        #
+        # Attached per cluster rather than inserted at an arbitrary code-point
+        # offset, which used to generate impossible strings -- a matra before
+        # the consonant it modifies, or stacked after a virama -- at every
+        # position in the word.
+        #
+        # KNOWN INCONSISTENCY, left in place deliberately. This mechanism can
+        # still emit 'ocr_repair', which skips the bigram gate, even though a
+        # 13-sign x every-akshara enumeration has none of the optical grounding
+        # the item-10 comment above says that trust requires. Tagging it
+        # unconstrained was tried and measured: on 300 synthetic lines it cost
+        # 14 fixes (193 -> 179) to avoid 2 breaks (146 -> 144), dropping
+        # precision 0.569 -> 0.554, and changed nothing on the 24 real-OCR
+        # pages. Both metrics available say the stricter tag is the worse
+        # trade, so the argument for it is currently consistency alone.
+        #
+        # Note the synthetic set is biased FOR this mechanism -- corrupt_line
+        # drops matras deliberately -- so it flatters the loose tag. Settling
+        # this needs real scanned pages with transcripts, which the repo has
+        # none of. Do not "fix" the inconsistency without that evidence.
+        for i, cl in enumerate(ax):
+            if cl.endswith('್'):
+                continue
             for vs in KANNADA_VOWEL_SIGNS:
-                cand = w[:i] + vs + w[i:]
+                cand = ''.join(ax[:i] + [cl + vs] + ax[i+1:])
                 res, fuzzy = resolve_valid_surface_form(cand, dictionary)
                 if res:
                     candidates.append((res, 0.35, 'word_correction_unconstrained' if fuzzy else 'ocr_repair'))
