@@ -29,6 +29,7 @@ from pipeline.correction import correct_text
 from pipeline.correction.corrector import suggest_kannada_word, heal_split_tokens
 from pipeline.correction.dictionary import get_dictionary
 from pipeline.correction.tokenizer import tokenize
+from pipeline.correction.ocr_repairs import normalize_script
 
 
 class PrecisionTestBase(unittest.TestCase):
@@ -215,6 +216,43 @@ class TestNonTextLineFiltering(PrecisionTestBase):
                          'high-confidence body text was flagged as non-text')
         self.assertTrue(corrected[1].get('is_likely_non_text'),
                         'single-digit-confidence graphic noise was not flagged')
+
+
+class TestFinalJoinerNormalization(unittest.TestCase):
+    """
+    Word-final ZWNJ/ZWJ after a virama is free orthographic variation in written
+    Kannada -- the corpus writes ಯಾದವ್ and ಯಾದವ್<ZWNJ> both, at a 3:1 ratio --
+    and it renders identically either way. Normalizing it keeps one word from
+    tokenizing as two. A joiner BETWEEN consonants is not free variation: it
+    forces the half-form over the conjunct ligature, and must survive.
+    """
+
+    ZWNJ = '‌'
+    ZWJ = '‍'
+
+    def test_word_final_joiner_is_dropped(self):
+        for bare in ('ಇಂಗ್ಲಿಷ್', 'ಕಾಮತ್', 'ಶಿವರಾವ್', 'ಯಾದವ್'):
+            for joiner in (self.ZWNJ, self.ZWJ):
+                self.assertEqual(normalize_script(bare + joiner), bare)
+
+    def test_joiner_before_punctuation_is_dropped(self):
+        for tail in ('.', ',', ' ಮತ್ತು', '-ಅಲಕ್'):
+            self.assertEqual(
+                normalize_script('ಕಾಮತ್' + self.ZWNJ + tail),
+                'ಕಾಮತ್' + tail,
+            )
+
+    def test_medial_joiner_between_consonants_survives(self):
+        for word in ('ಕ್' + self.ZWNJ + 'ವ', 'ಏಕ್' + self.ZWNJ + 'ನಿರಂಜನ'):
+            self.assertEqual(normalize_script(word), word)
+
+    def test_joiner_not_after_virama_survives(self):
+        word = 'ಕ' + self.ZWNJ
+        self.assertEqual(normalize_script(word), word)
+
+    def test_clean_text_is_untouched(self):
+        for word in ('ಇಂಗ್ಲಿಷ್', 'ಶಿಕ್ಷಣವು', 'ಕಾಫಿ'):
+            self.assertEqual(normalize_script(word), word)
 
 
 if __name__ == '__main__':

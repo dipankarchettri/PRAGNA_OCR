@@ -12,6 +12,24 @@ from typing import Set, Optional, Tuple
 # represents an archaic Repha (e.g., ಕನಾ೯ಟಕ -> ಕರ್ನಾಟಕ, ಕತ೯ವ್ಯ -> ಕರ್ತವ್ಯ, ಮಾ೯ -> ರ್ಮಾ)
 REPHA_REGEX = re.compile(r'([\u0C85-\u0CB9][\u0CBE-\u0CD6]?)೯')
 
+# Word-final ZWNJ/ZWJ after a virama.
+#
+# Tesseract routinely emits a zero-width non-joiner after a word-final virama
+# (ಇಂಗ್ಲಿಷ್<ZWNJ>, ಕಾಮತ್<ZWNJ>, ಶಿವರಾವ್<ZWNJ>), which no human transcript
+# contains. It renders identically, so it is invisible in the output and in any
+# eyeballed diff, but it makes the token compare unequal to the correct word --
+# it is a silent, undetectable corruption of exactly the kind this corpus must
+# not carry into training data.
+#
+# Scoped to the word-final position on purpose. A virama at the end of a word
+# already renders as the explicit half-form, so a ZWNJ there requests something
+# it was going to get anyway and carries no distinction. Between two consonants
+# it is meaningful -- it forces the half-form over the conjunct ligature
+# (ಕ್<ZWNJ>ವ vs ಕ್ವ) -- so medial joiners are left alone. Measured on the nine
+# real pages: 19 joiners in the OCR output, all following a virama, 17 of them
+# word-final (against 2 in the human references).
+FINAL_JOINER_REGEX = re.compile(r'\u0CCD[\u200C\u200D]+(?=$|[\s\W])')
+
 
 def clean_unicode_glitches(text: str) -> str:
     """
@@ -32,6 +50,12 @@ def clean_unicode_glitches(text: str) -> str:
 
     # 3. Clean stray punctuation specks before words
     t = re.sub(r'^[«“"]\s+', r'“', t)
+
+    # 4. Drop the word-final ZWNJ/ZWJ Tesseract adds after a virama -- see
+    # FINAL_JOINER_REGEX. Invisible when rendered, but it makes the token
+    # unequal to the correct word.
+    if '\u200c' in t or '\u200d' in t:
+        t = FINAL_JOINER_REGEX.sub('\u0CCD', t)
     return t
 
 

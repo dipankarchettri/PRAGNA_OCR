@@ -80,19 +80,51 @@ justified Kannada with **no space characters at all** and duplicates matras, so 
 a wrong correction silently corrupts training data, where an untouched OCR error stays
 visible downstream. An engine that lowers CER while raising `broke` is a regression.
 
-Measured on 24 typeset pages (Tesseract `kan`, psm 6), before → after the space-merge
-precision fix:
+Current state, all three sets, at the production defaults (`kan`, psm 3, oem 1):
 
-| | CER | WER | fixed | broke | precision |
+| set | CER base → corrected | WER base → corrected | fixed | broke | precision |
 |---|---|---|---|---|---|
-| uncorrected baseline | 0.0047 | 0.0310 | — | — | — |
-| corrector, before fix | 0.0056 | 0.0450 | 2 | 50 | 0.038 |
-| corrector, after fix | **0.0050** | **0.0335** | 2 | **4** | **0.333** |
+| **9 real pages** | 0.0558 → **0.0520** | 0.2889 → **0.2697** | 10 | **0** | **1.000** |
+| 24 typeset pages | 0.0053 → **0.0035** | 0.0335 → **0.0172** | 2 | 1 | 0.667 |
+| 300 synthetic lines | 0.0155 → **0.0103** | 0.1710 → **0.1027** | 350 | 39 | 0.900 |
 
-Note what the baseline says: Tesseract reads these clean pages at 0.47% CER, so there is
-almost nothing for the corrector to fix, and it is still slightly net-negative here. Its
-value has to show up on degraded and genuinely scanned pages — which is what the `--degrade`
-ladder and real fixtures are for.
+The real pages are the honest number; the other two are regression gates. Note the synthetic
+CER is understated by the joiner normalization below — measured with joiners neutralized on
+both sides it is 0.0091, and the gap is the metric penalizing a deliberate normalization
+rather than real damage.
+
+**Where the remaining error actually is.** Of 128 single-word substitution errors across the
+nine real pages, the correct word is in the generated candidate set for only **16 (12.5%)**
+— and of those, **zero** are then discarded by the corpus-frequency target gate. The engine's
+ceiling is candidate-generation *recall*, not its gates or its ranking. Of the 112 it never
+proposes, 75 are 1 akshara away and 37 are 2 or more, so widening the search radius is not
+sufficient either: the 1-akshara misses are glyph pairs absent from `GLYPH_CONFUSIONS`
+(ಮ/ಥ inside a conjunct, ಕ/ಯ) and proper nouns absent from the dictionary.
+
+This is also why growing the dictionary has stopped paying. 28.1% of correct Kannada words on
+these pages are absent from the 622k-form membership set and 11.7% are unattested in the
+n-gram corpus, but those words are *productively formed* (ಪತ್ರಿಕೋದ್ಯೋಗಿಯಾಗಲು,
+ಸೃಷ್ಟಿಸೌಂದರ್ಯದ), so no flat word list closes the gap at any size.
+
+**Measured negative result — compositional analysis (do not retry without new evidence).**
+The obvious fix for the above is to score a word's *parts* instead of its surface string:
+strip inflection, split the stem into dictionary words, and accept the word if every part is
+well attested (ಸೃಷ್ಟಿಸೌಂದರ್ಯದ is unattested; ಸೃಷ್ಟಿ 36,606 and ಸೌಂದರ್ಯ 47,038 are common).
+This was implemented and wired into all three gates, then ablated per site:
+
+| config | typeset broke | typeset precision | synth broke | synth precision | real CER |
+|---|---|---|---|---|---|
+| baseline | 1 | 0.667 | 40 | 0.897 | 0.0532 |
+| validation only | 1 | 0.667 | 40 | 0.897 | 0.0532 |
+| resolution only | 1 | 0.667 | 40 | 0.896 | 0.0532 |
+| **target gate** | **3** | **0.400** | **65** | **0.844** | **0.0537** |
+
+It recovered 33% of the unattested vocabulary as *legal* targets and improved nothing,
+because legal is not the same as *reachable*: the 12.5% recall figure above means the gate
+was never what blocked those words. Widening it only gave the edit search more places to
+land. The validation half is provably inert — `collect_kannada_candidates` only
+short-circuits on validity when `corpus_frequency >= VALID_WORD_TRUST_FREQUENCY` (1,000),
+and a compositionally-attested word is by construction below 2. Reverted.
 
 ## Architecture
 
@@ -116,7 +148,11 @@ Both paths converge on `correct_layout_lines()` before export.
 
 Stages run in this fixed order (see `corrector.py`):
 1. `tokenizer.py` — splits text into Kannada (`ಀ-೿` + ZWJ/ZWNJ) vs. non-Kannada tokens by exact byte offset; non-Kannada tokens (English, numbers, punctuation) are never touched, and `reconstruct(tokens)` must losslessly rebuild the original around them.
-2. `ocr_repairs.py` — universal script-level normalization (Repha `...೯` → `ರ್...`, zero-digit→anusvara `೦`→`ಂ`, illegal vowel+matra cleanup), run before dictionary lookup.
+2. `ocr_repairs.py` — universal script-level normalization (Repha `...೯` → `ರ್...`, zero-digit→anusvara `೦`→`ಂ`, illegal vowel+matra cleanup, word-final joiner removal), run before dictionary lookup.
+
+   **Word-final ZWNJ/ZWJ after a virama** is dropped (`FINAL_JOINER_REGEX`). Tesseract emits it constantly (19 occurrences across the 9 real pages, all after a virama, 17 word-final; the human transcripts have 2), it renders identically, and it makes the token compare unequal to the correct word — an invisible corruption, the worst kind for this corpus. Worth 0.0532 → 0.0520 CER and 0.2782 → 0.2697 WER on real pages, and it takes the corrector net-positive on typeset pages for the first time (0.0053 → 0.0035, previously 0.0057).
+
+   Scoped to word-final on purpose, and *not* gated on frequency. A medial joiner is meaningful — it forces the half-form over the conjunct ligature (`ಕ್<ZWNJ>ವ` vs `ಕ್ವ`) — so it survives. Word-finally it is free orthographic variation: clean published Kannada writes it 12,166 times in 161k corpus lines, and the bare form outnumbers the joined one by only 1.4–3.4× (ಯಾದವ್ 51,930 / 16,708), far below `FREQUENCY_DOMINANCE_RATIO`, so no frequency test can separate "Tesseract added one" from "the writer meant it". Normalizing free variation is the right call for a training corpus — it stops one word tokenizing as two — but it is a normalization, not a correction, so it does not appear in `fixed`/`broke`, and `raw_text` keeps the original for audit.
 3. `morphology.py` — Sandhi/agglutinative suffix stripping via **longest-match-first** against the Hunspell affix rules; `join_root_suffix()` must stay in sync with any suffix list changes here.
 4. `edit_distance.py` — weighted Levenshtein with a Kannada optical-glyph confusion matrix (visually similar glyph pairs get lower substitution cost so they outrank generic dictionary stems) plus universal single-character insertion/deletion candidate generation.
 5. `ngram.py` — unigram/bigram frequency scoring to rank among surviving candidates. `init_pipeline()` loads a cached real-corpus model from `data/ngram_model.pkl.gz` (gzip+pickle — ~2x faster to load than gzip+JSON at this scale) if present (built via `tools/build_ngram_model.py` from AI4Bharat IndicCorpV2), falling back to unigram-only counts from the dictionary word list if that cache doesn't exist. `score_candidate()` always returns a bounded `[0.0, 0.3]` bonus regardless of which one is loaded, so `corrector.py` never needs corpus-size-dependent tuning.
