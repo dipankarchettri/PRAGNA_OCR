@@ -17,7 +17,60 @@ from .morphology import (
     BROKEN_SUFFIXES
 )
 from .ocr_repairs import normalize_script, clean_unicode_glitches
-from .ngram import train_from_word_list, score_candidate
+from .ngram import train_from_word_list, score_candidate, corpus_frequency, has_bigram_support
+
+# Minimum real-corpus attestation count for a word absent from the curated
+# dictionary to be treated as potentially "already correct" at all (see
+# FREQUENCY_DOMINANCE_RATIO below). The curated Hunspell dictionary (~46k
+# entries) is nowhere near complete against ordinary Kannada inflected forms
+# -- the trained corpus model covers ~12M unique surface forms and catches
+# this gap directly. >=2 excludes add_vocabulary()'s padding value of
+# exactly 1 for known dictionary words, requiring genuine repeated real-text
+# attestation rather than a single coincidental corpus occurrence.
+MIN_CORPUS_ATTESTATION = 2
+
+# How many times more corpus-attested a correction candidate must be than
+# the original word before suggest_kannada_word will actually apply it, once
+# the original itself clears MIN_CORPUS_ATTESTATION. A huge real-world
+# corpus inevitably contains some fraction of typos/OCR noise/unrelated
+# loanword collisions, and the original word's raw attestation count *alone*
+# can't separate that from a genuinely rare real word -- both can sit in
+# similar low-hundreds ranges. What actually distinguishes them is the
+# relative gap to the best correction candidate: "ಮಂಡಲಿಗೆ" (freq 198, the
+# real spelling in an actual exam-board document) must be KEPT even though
+# "ಮಂಡಳಿಗೆ" (freq 17,658, the generic dictionary spelling) is 89x more
+# common -- that's ordinary spelling variation. But "ಸಂಗಿತ" (freq 295,
+# common OCR-typo noise) must be CORRECTED to "ಸಂಗೀತ" (freq 197,520) at a
+# 669x gap -- that's not plausibly variation, it's a real word being
+# swamped by its own typo's corpus noise. 250x sits between the two
+# measured cases (89x keep, 669x correct) with a comfortable margin on
+# both sides.
+FREQUENCY_DOMINANCE_RATIO = 250
+
+# Fallback minimum real-corpus attestation for a 'word_correction_unconstrained'
+# candidate (blind single-char deletion/insertion -- see generate_kannada_candidates
+# item 10) when there's no prev/next Kannada word to check bigram support
+# against at all (e.g. a word at a line/document boundary, or a direct
+# suggest_kannada_word("...") call with no context args). Frequency
+# dominance alone can't gate this mechanism -- see the item-10 comment for
+# why -- so with zero context to fall back on we require the correction
+# target to be unambiguously common. Reuses the same freq>=100 bar already
+# established elsewhere in this project as the "safe to trust as genuinely
+# common" threshold (see the Alar dictionary-growth vocabulary work).
+MIN_CANDIDATE_ATTESTATION_FOR_UNSEEN_ORIGINAL = 100
+
+# Tesseract's own per-word confidence (0-100), when available, at or above
+# which a word is left untouched regardless of what the corrector would
+# otherwise suggest. Calibrated against real cases from this project's own
+# testing: every word that was ALREADY correct but got wrongly "corrected"
+# this session (ಭಾವಃ, ಇಮೇ, ದೇಹಾ, ಅಜೋ, ಯಣ, ಅನುಸರಣವು, ಹಣ್ಣು, ಮೇಲಿ) had OCR
+# confidence 90-96; the one clear genuine-error correction in the same
+# sample (ಕಲವು -> ಕೆಲವು) sat at 69, and clear noise (ಕವಿಂರು) at 16. 85
+# sits with margin on both sides of that split. This is a blunter, cheaper
+# signal than any of the corpus-evidence gating above -- it doesn't require
+# guessing at what the word means, just trusting that Tesseract was
+# actually confident about what it read.
+HIGH_OCR_CONFIDENCE_TRUST = 85
 
 # Strict protected tokens that should never be altered or fused
 PROTECTED_TOKENS = {
@@ -44,6 +97,21 @@ KANNADA_CONSONANTS = set('ಕಖಗಘಙಚಛಜಝಞಟಠಡಢಣತಥದ
 # Dependent vowel signs (matras) + anusvara/virama -- small diacritics that
 # OCR frequently drops anywhere in a word, not just at word boundaries.
 KANNADA_VOWEL_SIGNS = 'ಾಿೀುೂೃೆೇೈೊೋೌಂ್'
+
+# Reject a correction if its true weighted edit distance from the
+# script-normalized word exceeds this. Measured from the *normalized* form
+# (post Repha/zero-anusvara/illegal-vowel cleanup), not the raw OCR token,
+# because normalize_script's own deterministic repairs can legitimately
+# span several raw character positions (e.g. one Repha digit standing in
+# for two characters ರ್) despite being a single trusted, always-desired
+# step -- measuring from the raw token would wrongly count that against the
+# floor. Real single-glyph OCR damage on top of the normalized form (a
+# dropped matra, a confused consonant) lands around 1.0; two compounding
+# errors land around 2.0. Past that, the "best" candidate is usually just
+# an unrelated word that happens to be reachable via a low base-cost
+# generation step (e.g. an out-of-vocabulary proper noun with no dictionary
+# entry) -- forcing it on is worse than leaving the OCR text untouched.
+MAX_CORRECTION_EDIT_DISTANCE = 2.0
 
 
 def heal_split_tokens(tokens: List[Dict[str, Any]], dictionary: Set[str]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
@@ -72,14 +140,36 @@ def heal_split_tokens(tokens: List[Dict[str, Any]], dictionary: Set[str]) -> Tup
                 joined = w1 + w2
                 should_join = False
 
-                # Case A: Second word is a known suffix fragment
-                if w2 in SUFFIXES or w2.startswith(('ವಾಗಿ', 'ವಾಗಲು', 'ವಾಗುವುದು', 'ವಾಗಬೇಕಿದೆ', 'ವಾಗಿದೆ', 'ವಾಗುತ್ತದೆ')):
+                # Case A: Second word is a known suffix fragment -- except a
+                # bare single-letter fragment (ಯ/ದ/ನ/ಅ/ಉ/ವು), which is
+                # exactly as coincidence-prone as is_valid_surface_word's
+                # own short-word suffix guard exists to prevent, regardless
+                # of the merged result's length: these single letters are
+                # also complete, independently correct Sanskrit particles/
+                # pronouns in their own right (e.g. "ಚ ಯ", or a longer
+                # phrase like "ಯಮದಾಹ್ಯೋ ಯ"), so bare membership in SUFFIXES
+                # alone isn't enough evidence to merge them away.
+                # Same ambiguity Case C guards against: a suffix-shaped w2
+                # doesn't mean the space was a mistake if w1 and w2 are ALSO
+                # each a complete, independently valid word on their own
+                # (e.g. "ಅನುಕೂಲ ಇದ್ದರೆ" / "ಉದ್ದ ಇದ್ದರೆ" -- "ಇದ್ದರೆ" is a
+                # real bound suffix elsewhere, but here it's the ordinary
+                # standalone word "if [there] is", and blindly concatenating
+                # it onto w1 with no sandhi glide produces a non-word).
+                if (w2 in SUFFIXES or w2.startswith(('ವಾಗಿ', 'ವಾಗಲು', 'ವಾಗುವುದು', 'ವಾಗಬೇಕಿದೆ', 'ವಾಗಿದೆ', 'ವಾಗುತ್ತದೆ'))) \
+                        and w2 not in ('ಯ', 'ದ', 'ನ', 'ಅ', 'ಉ', 'ವು') \
+                        and not (w1 in dictionary and w2 in dictionary):
                     should_join = True
                 # Case B: First word is not a valid word, but joined form IS a valid dictionary word
                 elif w1 not in dictionary and (joined in dictionary or decompose_word(joined, dictionary)[0] is not None):
                     should_join = True
-                # Case C: Joint compound word is in dictionary
-                elif joined in dictionary:
+                # Case C: Joint compound word is in dictionary -- but not
+                # when both halves are ALSO independently valid dictionary
+                # words on their own: Kannada often allows a compound to be
+                # written either as one word or as two separate words (e.g.
+                # "ಹಣ್ಣು ಹಂಪಲು" / "ಹಣ್ಣುಹಂಪಲು" are both real), so the joined
+                # form being listed isn't evidence the space was a mistake.
+                elif joined in dictionary and not (w1 in dictionary and w2 in dictionary):
                     should_join = True
 
                 if should_join:
@@ -107,36 +197,74 @@ def heal_split_tokens(tokens: List[Dict[str, Any]], dictionary: Set[str]) -> Tup
 
 
 def is_valid_surface_word(w: str, dictionary: Set[str]) -> bool:
-    """Check if the surface word token is a completely valid, uncorrupted Kannada word."""
+    """
+    Check if the surface word token is structurally valid Kannada: an exact
+    dictionary entry, a valid dictionary-root + suffix decomposition, or a
+    recognized compound. This is a hard, curated-source gate -- real-corpus
+    attestation alone is deliberately NOT checked here (see
+    MIN_CORPUS_ATTESTATION / KEEP_ORIGINAL_BASE_COST in
+    generate_kannada_candidates) because raw frequency can't reliably
+    distinguish a genuinely rare real word from corpus noise/collisions, so
+    it needs to compete as a scored candidate rather than short-circuit
+    correction entirely.
+    """
     if w in dictionary:
         return True
     for bs in BROKEN_SUFFIXES:
         if bs in w:
             return False
-    root, suf = decompose_word(w, dictionary)
+    root, suf = decompose_word(w, dictionary, exact_only=True)
     if root is not None and suf not in BROKEN_SUFFIXES:
         # Guard against greedy 1-letter suffix stripping on short words (e.g. ಆಳೆಯ != ಆಳೆ + ಯ)
         if len(w) <= 4 and suf in ('ಯ', 'ದ', 'ನ', 'ಅ', 'ಉ', 'ವು'):
             return False
         return True
-    if is_compound_word(w, dictionary):
+    # is_compound_word's arbitrary two-way split (any i such that word[:i]
+    # and word[i:] are each independently real dictionary words) gets
+    # increasingly likely to fire by pure coincidence as the dictionary
+    # grows -- most short Kannada syllable pairs ARE real words on their
+    # own, so splitting almost any short word finds SOME dictionary/
+    # dictionary pairing without the concatenation being a real compound
+    # (e.g. ಪಥ "path" + ಮಾಷ "a lentil" structurally split ಪಥಮಾಷ, which
+    # isn't a real word). Requiring the whole reconstructed compound to
+    # itself have real corpus attestation is what actually distinguishes a
+    # genuine compound from a coincidental split.
+    if is_compound_word(w, dictionary) and corpus_frequency(w) >= MIN_CORPUS_ATTESTATION:
         return True
     return False
 
 
-def resolve_valid_surface_form(cand: str, dictionary: Set[str]) -> Optional[str]:
+def resolve_valid_surface_form(cand: str, dictionary: Set[str]) -> Tuple[Optional[str], bool]:
     """
-    Validate a candidate transformation against the dictionary and morphology engine,
-    reconstructing the proper inflected surface word if needed.
+    Validate a candidate transformation against the dictionary and morphology
+    engine, reconstructing the proper inflected surface word if needed.
+    Returns (surface_form_or_None, is_fuzzy). is_fuzzy is True when the only
+    match found requires decompose_word's vowel-ending-guessing fallback
+    (the stripped root isn't literally in the dictionary -- only root+ಿ/ು/ಾ/ೆ
+    happened to be). That's the same coincidence-prone shape as the blind
+    edit-distance mechanisms below: a real dictionary word (e.g. the bound
+    stem ಅನುಸರಿ) can happen to be what a guessed vowel ending lands on,
+    silently turning an already-correct-but-undictionaried word (e.g.
+    ಅನುಸರಣ, missing from the dictionary) into something unrelated once a
+    glyph substitution elsewhere in the pipeline nudges the stem shape.
+    Callers should treat a fuzzy resolution with the same reduced trust as
+    'word_correction_unconstrained' -- see is_valid_surface_word's
+    docstring for the same risk on the detection side.
     """
     if cand in dictionary:
-        return cand
-    root, suf = decompose_word(cand, dictionary)
+        return cand, False
+    root, suf = decompose_word(cand, dictionary, exact_only=True)
     if root is not None:
-        return join_root_suffix(root, suf)
-    if is_compound_word(cand, dictionary):
-        return cand
-    return None
+        return join_root_suffix(root, suf), False
+    root, suf = decompose_word(cand, dictionary, exact_only=False)
+    if root is not None:
+        return join_root_suffix(root, suf), True
+    # See is_valid_surface_word: is_compound_word's structural split alone
+    # is too permissive to trust as a correction target -- require the
+    # whole candidate to have real corpus attestation too.
+    if is_compound_word(cand, dictionary) and corpus_frequency(cand) >= MIN_CORPUS_ATTESTATION:
+        return cand, False
+    return None, False
 
 
 def generate_kannada_candidates(
@@ -160,9 +288,9 @@ def generate_kannada_candidates(
     # 2. Universal Script Normalization (Repha regex + zero-anusvara)
     norm = normalize_script(word)
     if norm != word:
-        res = resolve_valid_surface_form(norm, dictionary)
+        res, fuzzy = resolve_valid_surface_form(norm, dictionary)
         if res:
-            candidates.append((res, 0.20, 'ocr_repair'))
+            candidates.append((res, 0.20, 'word_correction_unconstrained' if fuzzy else 'ocr_repair'))
 
     w = norm
 
@@ -173,22 +301,28 @@ def generate_kannada_candidates(
             if sub in GLYPH_CONFUSIONS:
                 for rep, cost in GLYPH_CONFUSIONS[sub]:
                     cand = w[:i] + rep + w[i+k_len:]
-                    res = resolve_valid_surface_form(cand, dictionary)
+                    res, fuzzy = resolve_valid_surface_form(cand, dictionary)
                     if res:
-                        candidates.append((res, cost, 'ocr_repair'))
+                        candidates.append((res, cost, 'word_correction_unconstrained' if fuzzy else 'ocr_repair'))
 
     # 4. Suffix normalizations (e.g. ಟ್ಟತ್ತು -> ಟ್ಟಿತ್ತು, ವಳ್ಳು -> ವಳು, ಸಂಯುವ -> ಸಾಯುವ, ುತದೆ -> ುತ್ತದೆ)
     for bad_suf, good_suf in SUFFIX_NORMALIZATIONS.items():
         if bad_suf in w:
             cand = w.replace(bad_suf, good_suf)
-            res = resolve_valid_surface_form(cand, dictionary)
+            res, fuzzy = resolve_valid_surface_form(cand, dictionary)
             if not res and w.endswith(bad_suf) and len(w) > len(bad_suf):
                 stem = w[:-len(bad_suf)]
-                r_test, s_test = decompose_word(stem + 'ು', dictionary)
-                if r_test or stem + 'ು' in dictionary:
+                if stem + 'ು' in dictionary:
                     res = join_root_suffix(stem + 'ು', good_suf)
+                else:
+                    r_test, s_test = decompose_word(stem + 'ು', dictionary, exact_only=True)
+                    if r_test is None:
+                        r_test, s_test = decompose_word(stem + 'ು', dictionary, exact_only=False)
+                        fuzzy = r_test is not None
+                    if r_test is not None:
+                        res = join_root_suffix(stem + 'ು', good_suf)
             if res:
-                candidates.append((res, 0.20, 'word_correction'))
+                candidates.append((res, 0.20, 'word_correction_unconstrained' if fuzzy else 'word_correction'))
 
     # 5. Single-char Optical Glyph Substitutions
     for i in range(len(w)):
@@ -196,17 +330,17 @@ def generate_kannada_candidates(
         if sub in GLYPH_CONFUSIONS:
             for rep, cost in GLYPH_CONFUSIONS[sub]:
                 cand = w[:i] + rep + w[i+1:]
-                res = resolve_valid_surface_form(cand, dictionary)
+                res, fuzzy = resolve_valid_surface_form(cand, dictionary)
                 if res:
-                    candidates.append((res, cost, 'ocr_repair'))
+                    candidates.append((res, cost, 'word_correction_unconstrained' if fuzzy else 'ocr_repair'))
 
     # 6. Systematic Vowel Length Transformations (ಹ್ರಸ್ವ <-> ದೀರ್ಘ)
     for i, ch in enumerate(w):
         if ch in VOWEL_MATRA_MAP:
             cand = w[:i] + VOWEL_MATRA_MAP[ch] + w[i+1:]
-            res = resolve_valid_surface_form(cand, dictionary)
+            res, fuzzy = resolve_valid_surface_form(cand, dictionary)
             if res:
-                candidates.append((res, 0.25, 'word_correction'))
+                candidates.append((res, 0.25, 'word_correction_unconstrained' if fuzzy else 'word_correction'))
 
     # 7. Stem-level substitutions for inflected words (e.g., ದೂಹಿಸಿದರು -> ದೂಷಿಸಿದರು)
     for suf in SUFFIXES:
@@ -218,48 +352,68 @@ def generate_kannada_candidates(
                     if sub in GLYPH_CONFUSIONS:
                         for rep, cost in GLYPH_CONFUSIONS[sub]:
                             rep_stem = stem[:j] + rep + stem[j+k_len:]
-                            res = resolve_valid_surface_form(join_root_suffix(rep_stem, suf), dictionary)
+                            res, fuzzy = resolve_valid_surface_form(join_root_suffix(rep_stem, suf), dictionary)
                             if not res:
-                                res = resolve_valid_surface_form(join_root_suffix(rep_stem + 'ು', suf), dictionary)
+                                res, fuzzy = resolve_valid_surface_form(join_root_suffix(rep_stem + 'ು', suf), dictionary)
                             if res:
-                                candidates.append((res, cost, 'ocr_repair'))
+                                candidates.append((res, cost, 'word_correction_unconstrained' if fuzzy else 'ocr_repair'))
             break
 
     # 8. Virama (Halant) Insertion between Adjacent Consonants
     for i in range(len(w) - 1):
         if w[i] in KANNADA_CONSONANTS and w[i+1] in KANNADA_CONSONANTS:
             cand = w[:i+1] + '್' + w[i+1:]
-            res = resolve_valid_surface_form(cand, dictionary)
+            res, fuzzy = resolve_valid_surface_form(cand, dictionary)
             if res:
-                candidates.append((res, 0.30, 'ocr_repair'))
+                candidates.append((res, 0.30, 'word_correction_unconstrained' if fuzzy else 'ocr_repair'))
             for ext in ['ೆ', 'ಾ', 'ು', 'ಣ', 'ಮಿ', 'ಿ']:
                 scand = cand + ext
-                sres = resolve_valid_surface_form(scand, dictionary)
+                sres, sfuzzy = resolve_valid_surface_form(scand, dictionary)
                 if sres:
-                    candidates.append((sres, 0.40, 'ocr_repair'))
+                    candidates.append((sres, 0.40, 'word_correction_unconstrained' if sfuzzy else 'ocr_repair'))
 
-    # 9. Anusvara Noise Speckle Removal
+    # 9. Anusvara Noise Speckle Removal -- same unconstrained-mechanism
+    # caveat as item 10 below: a trailing anusvara is also the ordinary
+    # Sanskrit case ending on a word whose bare-stem form is a common
+    # Kannada loanword (ಅಕ್ಷರಂ -> ಅಕ್ಷರ, ಮಿಶ್ರಂ -> ಮಿಶ್ರ), so this can't be
+    # trusted on frequency dominance alone either.
     if 'ಂ' in w:
         cand = w.replace('ಂ', '')
-        res = resolve_valid_surface_form(cand, dictionary)
+        res, _fuzzy = resolve_valid_surface_form(cand, dictionary)
         if res:
-            candidates.append((res, 0.35, 'ocr_repair'))
+            candidates.append((res, 0.35, 'word_correction_unconstrained'))
 
     # 10. Universal 1-Edit Deletion & Boundary Insertion (Handles OCR truncation or speckle insertions)
+    #
+    # These two loops are the least-constrained candidate generators in the
+    # whole pipeline: "delete any single character" / "append any
+    # consonant" has no glyph-similarity or morphological grounding at
+    # all -- it only asks whether the result happens to land on a
+    # dictionary word. That's exactly why it also fires on genuine Sanskrit
+    # case-ending variation (visarga/anusvara/vocalic endings absent from
+    # the Kannada-only dictionary) as if it were OCR noise: deleting one
+    # character of e.g. "ಭಾವಃ" or "ಇಮೇ" happens to land on the common
+    # Kannada word "ಭಾವ"/"ಮೇ", and frequency-dominance alone can't tell
+    # that apart from real noise -- a rare real word being outnumbered by
+    # its own common near-neighbor is the *identical* statistical
+    # signature either way. Tagged 'word_correction_unconstrained' (mapped
+    # back to 'word_correction' before being returned to callers) so
+    # suggest_kannada_word can require actual bigram context support for
+    # just these two mechanisms, not the higher-precision ones below.
     if len(w) >= 3:
         # Single character deletion
         for i in range(len(w)):
             cand = w[:i] + w[i+1:]
-            res = resolve_valid_surface_form(cand, dictionary)
+            res, _fuzzy = resolve_valid_surface_form(cand, dictionary)
             if res:
-                candidates.append((res, 0.40, 'word_correction'))
+                candidates.append((res, 0.40, 'word_correction_unconstrained'))
 
         # Terminal single-character insertion (handles truncated word endings)
         for ch in KANNADA_CONSONANTS:
             cand = w + ch
-            res = resolve_valid_surface_form(cand, dictionary)
+            res, _fuzzy = resolve_valid_surface_form(cand, dictionary)
             if res:
-                candidates.append((res, 0.35, 'word_correction'))
+                candidates.append((res, 0.35, 'word_correction_unconstrained'))
 
         # Vowel-sign (matra) insertion at any position (handles a dropped
         # diacritic anywhere in the word, e.g. a missing terminal locative
@@ -268,9 +422,9 @@ def generate_kannada_candidates(
         for i in range(len(w) + 1):
             for vs in KANNADA_VOWEL_SIGNS:
                 cand = w[:i] + vs + w[i:]
-                res = resolve_valid_surface_form(cand, dictionary)
+                res, fuzzy = resolve_valid_surface_form(cand, dictionary)
                 if res:
-                    candidates.append((res, 0.35, 'ocr_repair'))
+                    candidates.append((res, 0.35, 'word_correction_unconstrained' if fuzzy else 'ocr_repair'))
 
     # 11. Deduplicate candidates and score with weighted Levenshtein & N-gram Language Model
     candidate_dict: Dict[str, Tuple[float, str]] = {}
@@ -311,21 +465,115 @@ def suggest_kannada_word(word: str, prev_word: Optional[str] = None, next_word: 
         top_cand, score, corr_type = candidates[0]
         if top_cand != word and corr_type != 'none':
             dist = weighted_edit_distance(word, top_cand)
-            return top_cand, dist, corr_type
+            norm_dist = weighted_edit_distance(normalize_script(word), top_cand)
+            if norm_dist > MAX_CORRECTION_EDIT_DISTANCE:
+                return word, 0.0, 'none'
+
+            is_unconstrained = corr_type == 'word_correction_unconstrained'
+            display_type = 'word_correction' if is_unconstrained else corr_type
+
+            # If the original word has (almost) no real corpus attestation,
+            # frequency dominance can't gate ANY mechanism -- not just the
+            # unconstrained ones. A high-precision glyph-confusion
+            # substitution is grounded in real optical similarity, but that
+            # doesn't mean this specific application is safe: OCR debris
+            # from a truncated/dropped run of characters (not a real word
+            # attempt at all) can still land one clean glyph-swap away from
+            # an unrelated common word (e.g. a truncated "ರಾಮಾಯಣ" fragment
+            # "ಯಣ" -> the common word "ಹಣ", "money") with no relationship
+            # to the original whatsoever. Require real local context
+            # support instead -- does the candidate actually co-occur with
+            # its neighbor in the corpus -- falling back to an absolute
+            # commonness floor only for the already-flagged-risky
+            # unconstrained mechanisms when there's no neighboring Kannada
+            # word to check bigram support against at all (a candidate
+            # reached only by exact dictionary/glyph match, in a genuinely
+            # context-free call, is left as-is to avoid regressing the
+            # normal single-word correction case).
+            word_freq = corpus_frequency(word)
+
+            if is_unconstrained:
+                # Unconstrained mechanisms need real context support
+                # UNCONDITIONALLY, regardless of the original word's own
+                # attestation -- this must stay independent of the
+                # word_freq check below, not folded into the same
+                # if/else: a rare-but-attested word (e.g. "ಭಾವಃ", freq 106)
+                # outnumbered 300x+ by its common bare-stem neighbor
+                # ("ಭಾವ") still clears the dominance ratio below on
+                # frequency alone, which is exactly the Sanskrit
+                # case-ending bug from earlier in this session -- the
+                # dominance check was never capable of catching that on
+                # its own, which is the entire reason this bigram check
+                # exists.
+                if prev_word or next_word:
+                    if not has_bigram_support(top_cand, prev_word, next_word):
+                        return word, 0.0, 'none'
+                elif corpus_frequency(top_cand) < MIN_CANDIDATE_ATTESTATION_FOR_UNSEEN_ORIGINAL:
+                    return word, 0.0, 'none'
+            # Non-unconstrained candidates (is_unconstrained False) are
+            # already structurally validated, not just frequency-plausible:
+            # `word` already failed is_valid_surface_word to even reach
+            # candidate generation, and `top_cand` was confirmed via a
+            # NON-fuzzy dictionary/morphology match reached through a
+            # grounded transform (optical glyph confusion, script
+            # normalization, suffix pattern, virama insertion -- see the
+            # fuzzy ternary in every generate_kannada_candidates item).
+            # Bigram co-occurrence on top of that is systematically
+            # miscalibrated: a correct RARE inflected form of a common root
+            # (Kannada's agglutinative morphology produces huge numbers of
+            # these) essentially never satisfies a literal bigram-adjacency
+            # check just because it's rare, not because it's wrong -- e.g.
+            # real "ದೂಷಿಸಿದವಳೂ" (corpus freq 1, resolved from OCR-garbled
+            # "ದೂಹಿಸಿದವಳೂ" via item 7's stem-level glyph substitution)
+            # succeeds in isolation but was wrongly blocked whenever real
+            # sentence context was present. The frequency-dominance check
+            # just below remains the safety net for these mechanisms once
+            # the original word is itself attested enough to plausibly be
+            # its own rare-but-real word.
+
+            if word_freq >= MIN_CORPUS_ATTESTATION:
+                cand_freq = corpus_frequency(top_cand)
+                if cand_freq < word_freq * FREQUENCY_DOMINANCE_RATIO:
+                    return word, 0.0, 'none'
+            return top_cand, dist, display_type
 
     # 3. Default Safe Fallback: Preserve original OCR text without corrupting
     return word, 0.0, 'none'
 
 
-def correct_text(text: str) -> Dict[str, Any]:
+def correct_text(
+    text: str,
+    allowed_types: Optional[Set[str]] = None,
+    word_confidences: Optional[List[Tuple[str, float]]] = None
+) -> Dict[str, Any]:
     """
     Correct a full block of mixed Kannada text.
     Combines Unicode normalization, space healing, dynamic Indic transforms, and N-gram ranking.
+
+    allowed_types, if given, restricts which correction *types*
+    ('ocr_repair' / 'word_correction') are actually applied to the output
+    text -- every correction is still found and reported in `corrections`
+    regardless, only whether it's written into `corrected` is gated. This
+    exists for ablation/diagnostic runs (e.g. "what does the pipeline look
+    like with only glyph/script-level repairs applied, no dictionary-based
+    word correction"); normal callers should leave it as None.
+
+    word_confidences, if given, is the (word_text, tesseract_confidence)
+    list for this line's OCR output (see ocr_image_with_layout's
+    'word_confidences'). A word whose own OCR confidence clears
+    HIGH_OCR_CONFIDENCE_TRUST is left untouched outright -- see that
+    constant's docstring for why this is trusted as a real signal, not
+    just corpus-frequency guesswork.
     """
     dictionary = get_dictionary()
     if not dictionary:
         load_dictionary()
         train_from_word_list(get_word_list())
+
+    conf_by_word: Dict[str, float] = {}
+    if word_confidences:
+        for w, c in word_confidences:
+            conf_by_word[w] = c
 
     # Pre-pass: clean Unicode zero-digit / anusvara scanning artifacts & universal Repha
     pre_cleaned = normalize_script(text)
@@ -333,7 +581,10 @@ def correct_text(text: str) -> Dict[str, Any]:
     tokens = tokenize(pre_cleaned)
 
     # Pre-pass 2: Heal split word gaps (Treated as OCR repairs)
-    tokens, space_corrections = heal_split_tokens(tokens, dictionary)
+    if allowed_types is None or 'ocr_repair' in allowed_types:
+        tokens, space_corrections = heal_split_tokens(tokens, dictionary)
+    else:
+        space_corrections = []
     for sc in space_corrections:
         sc['type'] = 'ocr_repair'
 
@@ -347,6 +598,9 @@ def correct_text(text: str) -> Dict[str, Any]:
             continue
 
         orig_word = token['value']
+
+        if conf_by_word.get(orig_word, -1) >= HIGH_OCR_CONFIDENCE_TRUST:
+            continue
 
         # Context extraction
         prev_kannada = None
@@ -371,7 +625,8 @@ def correct_text(text: str) -> Dict[str, Any]:
                 'start': token['start'],
                 'end': token['end']
             })
-            token['value'] = corrected_word
+            if allowed_types is None or corr_type in allowed_types:
+                token['value'] = corrected_word
 
     corrected_text = reconstruct(tokens)
     return {
@@ -385,15 +640,43 @@ def correct_text(text: str) -> Dict[str, Any]:
     }
 
 
-def correct_layout_lines(layout_lines: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+
+# Below this mean OCR confidence, a line isn't degraded prose -- it's OCR
+# hallucinating text rows out of non-text content (decorative banner art,
+# logos, photos). Validated against 7 real pages covering the hard real
+# cases (faded scans, heavy Sanskrit vocabulary the dictionary doesn't
+# cover, degraded photocopies): every genuine body-text line across all of
+# them still cleared 55 mean confidence. Only an actual cover/poster page's
+# graphic regions dropped below it, down into single digits. 40 leaves a
+# comfortable margin below every observed real-prose case while catching
+# that non-text one. Deliberately confidence-only, not combined with a
+# dictionary valid-word-ratio check: ratio alone misfires on exactly the
+# Sanskrit-vocabulary case above (real text, ~0% dictionary hits, but
+# completely normal confidence), so it can't be used as a safe secondary
+# gate here. Never applies to PDF-digital-extraction lines (line.get('conf')
+# is None for those -- they were never OCR'd from pixels at all).
+NON_TEXT_LINE_CONFIDENCE = 40.0
+
+
+def correct_layout_lines(layout_lines: List[Dict[str, Any]], allowed_types: Optional[Set[str]] = None) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """
     Correct structured layout lines preserving bounding box / alignment tags.
+    See correct_text for what allowed_types does. Automatically forwards
+    each line's own 'word_confidences' (populated by ocr_image_with_layout)
+    into correct_text if present -- callers don't need to opt in separately.
+
+    Each output line also carries 'is_likely_non_text' (see
+    NON_TEXT_LINE_CONFIDENCE) so callers building a clean training corpus
+    can exclude OCR hallucination on graphic content without discarding it
+    outright -- the line is still returned here for audit/visual fidelity,
+    just flagged.
     """
     corrected_lines = []
     all_corrections = []
 
     for line in layout_lines:
-        res = correct_text(line.get('text', ''))
+        res = correct_text(line.get('text', ''), allowed_types=allowed_types, word_confidences=line.get('word_confidences'))
+        conf = line.get('conf')
         corrected_lines.append({
             'text': res['corrected'],
             'original_text': line.get('text', ''),
@@ -402,7 +685,9 @@ def correct_layout_lines(layout_lines: List[Dict[str, Any]]) -> Tuple[List[Dict[
             'left': line.get('left', 0),
             'width': line.get('width', 0),
             'height': line.get('height', 0),
-            'page_num': line.get('page_num', 1)
+            'page_num': line.get('page_num', 1),
+            'ocr_confidence': conf,
+            'is_likely_non_text': conf is not None and conf < NON_TEXT_LINE_CONFIDENCE
         })
         all_corrections.extend(res['corrections'])
 

@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 venv/
+venv-vllm/
 env/
 .venv/
 build/
@@ -53,3 +54,13 @@ test_output.pdf
 # tools/build_ngram_model.py --download (see CLAUDE.md).
 data/corpus_kn/
 data/ngram_model.pkl.gz
+
+# Filtered literary corpus (tools/filter_literary_corpus.py output) -- same
+# reasoning, derived from local source dumps, not meant to live in git.
+data/corpus_literary/
+data/corpus_literary_report.csv
+
+# Raw Kanaja source docx (1.8GB) -- local copy of an external dump, not
+# meant to live in git. Re-derive data/corpus_literary/ from this via
+# tools/filter_literary_corpus.py if it's ever lost.
+data/kanaja_docx_raw/

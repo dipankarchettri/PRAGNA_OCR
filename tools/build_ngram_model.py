@@ -118,6 +118,9 @@ def main():
     parser.add_argument('--limit-files', type=int, default=0, help='Cap on number of corpus shard files to download (0 = no cap)')
     parser.add_argument('--min-bigram-count', type=int, default=2, help='Drop bigrams seen fewer than this many times (bounds memory)')
     parser.add_argument('--output', default=DEFAULT_MODEL_PATH, help='Where to write the trained model')
+    parser.add_argument('--workers', type=int, default=1,
+                         help='Parallel worker processes for training (default: 1, sequential single-thread). '
+                              'A single huge corpus file is split by byte offset so it still parallelizes.')
     args = parser.parse_args()
 
     if not args.download and not args.corpus_dir:
@@ -130,15 +133,24 @@ def main():
     print(f"[*] Training n-gram model from corpus at: {corpus_path}")
     model = KannadaLanguageModel()
 
-    def sentence_stream():
-        count = 0
-        for sentence in iter_corpus_sentences(corpus_path):
-            count += 1
-            if count % 500000 == 0:
-                print(f"    ... {count:,} sentences processed")
-            yield sentence
+    if args.workers > 1:
+        print(f"[*] Training with {args.workers} worker processes...")
 
-    model.train(sentence_stream(), min_bigram_count=args.min_bigram_count)
+        def progress(done, total):
+            print(f"    ... {done}/{total} shards merged")
+
+        model.train_parallel(corpus_path, workers=args.workers, min_bigram_count=args.min_bigram_count,
+                              progress_cb=progress)
+    else:
+        def sentence_stream():
+            count = 0
+            for sentence in iter_corpus_sentences(corpus_path):
+                count += 1
+                if count % 500000 == 0:
+                    print(f"    ... {count:,} sentences processed")
+                yield sentence
+
+        model.train(sentence_stream(), min_bigram_count=args.min_bigram_count)
 
     print(f"[*] Trained on {model.total_words:,} words, "
           f"{len(model.unigram):,} unique unigrams, {len(model.bigram):,} bigrams (post-pruning)")

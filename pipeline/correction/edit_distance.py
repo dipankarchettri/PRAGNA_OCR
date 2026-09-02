@@ -43,6 +43,19 @@ CONFUSION_PAIRS: Dict[Tuple[str, str], float] = {
     ('ಥ', 'ಫ'): 0.25,
     ('ದ', 'ಞ'): 0.35,
 
+    # 2b. Added from an empirical audit (aligning real raw-Tesseract output
+    # against hand-verified ground truth on 4 held-out book pages) rather
+    # than visual-similarity intuition like the rest of this table -- see
+    # git history. Only pairs that recurred 2+ times, including across
+    # different source documents, were kept; single-occurrence diffs from
+    # that same audit were discarded as too likely to be one-off noise
+    # (e.g. from the single worst-quality page in the sample) rather than a
+    # generalizable confusion.
+    ('ಮ', 'ವ'): 0.25,
+    ('ಯ', 'ವ'): 0.25,
+    ('ಜ', 'ಚ'): 0.25,
+    ('ಲ', 'ರ'): 0.25,
+
     # 3. Independent Vowels & Vowel Flips
     ('ಅ', 'ಆ'): 0.25,
     ('ಇ', 'ಈ'): 0.25,
@@ -58,6 +71,15 @@ CONFUSION_PAIRS: Dict[Tuple[str, str], float] = {
     ('ಸ್ಮ', 'ಷ್ಮ'): 0.20,
     ('ಸ್ಮೆ', 'ಷ್ಮೆ'): 0.20,
     ('ದ್ವ', 'ಧ್ವ'): 0.20,
+
+    # 4b. From the same empirical audit as 2b -- the single strongest
+    # pattern found: subscript/conjunct ya (್ಯ) misread as subscript ka
+    # (್ಕ), recurring independently in two different source documents
+    # (e.g. ದುಷ್ಯಂತ -> ದುಷ್ಕಂತ, ...ಸ್ಯ -> ...ಸ್ಕ three separate times on one
+    # page alone). Consistent with this project's own documented finding
+    # that Kannada ottakshara/subscript conjuncts are the most fragile part
+    # of the script under OCR (see the --dpi rationale in CLAUDE.md).
+    ('್ಯ', '್ಕ'): 0.20,
 }
 
 _COST_MAP: Dict[FrozenSet[str], float] = {}

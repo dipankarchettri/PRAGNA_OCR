@@ -167,9 +167,9 @@ def ocr_image_with_layout(
 
     layout_lines = []
     for key in sorted(lines_map.keys()):
-        boxes = lines_map[key]
+        boxes = sorted(lines_map[key], key=lambda b: b['left'])
         line_text = ' '.join(b['text'] for b in boxes)
-        
+
         min_left = min(b['left'] for b in boxes)
         max_right = max(b['left'] + b['width'] for b in boxes)
         min_top = min(b['top'] for b in boxes)
@@ -195,7 +195,12 @@ def ocr_image_with_layout(
             'width': line_width,
             'height': max_bottom - min_top,
             'page_num': page_num,
-            'conf': sum(b['conf'] for b in boxes) / len(boxes)
+            'conf': sum(b['conf'] for b in boxes) / len(boxes),
+            # Per-word (text, confidence) pairs in the same left-to-right
+            # order as 'text' was joined from, so downstream correction can
+            # look up a given word's own OCR confidence rather than only
+            # the line-level mean.
+            'word_confidences': [(b['text'], b['conf']) for b in boxes]
         })
 
     # Sort layout lines top-to-bottom with baseline tolerance to maintain natural reading

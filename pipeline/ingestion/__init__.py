@@ -2,6 +2,7 @@ from .image_processor import (
     is_image_file,
     load_and_preprocess_image,
     normalize_resolution,
+    preprocess_for_ocr,
     SUPPORTED_IMAGE_EXTENSIONS
 )
 from .pdf_processor import (
@@ -20,6 +21,7 @@ __all__ = [
     'is_image_file',
     'load_and_preprocess_image',
     'normalize_resolution',
+    'preprocess_for_ocr',
     'SUPPORTED_IMAGE_EXTENSIONS',
     'is_pdf_file',
     'inspect_pdf',

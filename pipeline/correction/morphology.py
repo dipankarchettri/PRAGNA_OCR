@@ -5,6 +5,11 @@ Handles agglutinative Kannada suffix stripping, stem analysis, and Sandhi rules.
 
 from typing import Set, Tuple, Optional, Dict
 
+# Dependent vowel signs (matras) -- a root ending in one of these is
+# vowel-final, which changes which suffixes can attach directly (see
+# decompose_word's oblique-case-suffix guard below).
+KANNADA_VOWEL_SIGNS = set('ಾಿೀುೂೃೆೇೈೊೋೌ')
+
 # Suffix normalizations for common OCR scanning corruptions
 SUFFIX_NORMALIZATIONS: Dict[str, str] = {
     'ುತದೆ': 'ುತ್ತದೆ',
@@ -50,8 +55,15 @@ SUFFIXES = [
     'ಆದರೂ', 'ಆದರೆ', 'ಇದ್ದರೆ', 'ಇದ್ದರೂ',
     
     # Emphatic & Euphonic
-    'ಯೂ', 'ನೂ', 'ದೂ', 'ವೂ', 'ಉ', 'ಒ', 'ವು', 'ಯು',
+    'ಯೂ', 'ನೂ', 'ದೂ', 'ವೂ', 'ಉ', 'ಒ', 'ವು', 'ಯು', 'ನು',
     'ಯ', 'ನ', 'ದ', 'ಅ',
+
+    # Periphrastic passive/impersonal ("ಲಾಗು" auxiliary): root + ಲು + ಆಗು
+    # sandhi-fuses to root + ಲಾಗು..., e.g. ಎನ್ನು+ಲಾಗುತ್ತದೆ -> ಎನ್ನಲಾಗುತ್ತದೆ,
+    # ಇರಿಸು+ಲಾಗಿದೆ -> ಇರಿಸಲಾಗಿದೆ. Not decomposable by the plain 'ಆಗಿದೆ'/
+    # 'ಆಗಿ' suffixes above since those need a literal independent ಆ, which
+    # this sandhi form never has.
+    'ಲಾಗುತ್ತಿದೆ', 'ಲಾಗುತ್ತದೆ', 'ಲಾಗುವುದು', 'ಲಾಗುತ್ತವೆ', 'ಲಾಗಿದೆ', 'ಲಾಯಿತು',
     
     # Verb inflections & Auxiliaries (Present / Past / Future / Perfect)
     'ಿಸುತ್ತವೆ', 'ಿಸುತ್ತಾನೆ', 'ಿಸುತ್ತಾಳೆ', 'ಿಸುತ್ತಾರ', 'ಿಸುತ್ತದೆ', 'ಿಸುತ್ತೀರಿ', 'ಿಸುತ್ತೇನೆ', 'ಿಸುತ್ತೇವೆ',
@@ -59,10 +71,36 @@ SUFFIXES = [
     'ುತದೆ', 'ುತಾರೆ', 'ುತಾನೆ', 'ುತಾಳೆ', 'ಸುತದೆ',
     'ಿಸಿದರು', 'ಿಸಿದನು', 'ಿಸಿದಳು', 'ಿಸಿದವು', 'ಿಸಿತು', 'ಿದರು', 'ಿದನು', 'ಿದಳು', 'ಿದವು', 'ಿತು',
     'ವಿತ್ತು', 'ಯಿತ್ತು', 'ಇತ್ತು', 'ದ್ದವು', 'ದ್ದರು', 'ದ್ದನು', 'ದ್ದಳು',
-    'ಿಸಲು', 'ಿಲು', 'ುವುದು', 'ಿಕೊಂಡು'
+    'ಿಸಲು', 'ಿಲು', 'ುವುದು', 'ಿಕೊಂಡು',
+
+    # Negative perfect participle ("not having done X"): verb root + ಇರ + ದ,
+    # surface-realized as root + ಿರದ after the root's citation-form ು elides
+    # before the following vowel (e.g. ಬಳಸು+ಇರದ -> ಬಳಸಿರದ, ಮಾಡು+ಇರದ ->
+    # ಮಾಡಿರದ, ಹೋಗು+ಇರದ -> ಹೋಗಿರದ). A standard, productive negation pattern,
+    # not specific to any one verb.
+    'ಿರದ'
 ]
 
 SUFFIXES.sort(key=len, reverse=True)
+
+# Suffixes that only ever attach to a verb root (never a bare nominal
+# particle). Scoped separately from SUFFIXES because the bare-consonant-stem
+# fallback in decompose_word (root[:-1], dropping a verb root's trailing
+# vowel, e.g. ಬೇಡು -> ಬೇಡ) is only linguistically valid here -- applying it
+# for every suffix risks colliding with an unrelated dictionary particle
+# that happens to share the same 3-letter prefix (e.g. stripping 'ದೂ' from
+# ಎಂಬುದೂ down to root ಎಂಬು would wrongly match "ಎಂಬ", a fixed particle, not
+# a verb stem taking 'ದೂ').
+VERB_SUFFIXES = {
+    'ಿಸುತ್ತವೆ', 'ಿಸುತ್ತಾನೆ', 'ಿಸುತ್ತಾಳೆ', 'ಿಸುತ್ತಾರ', 'ಿಸುತ್ತದೆ', 'ಿಸುತ್ತೀರಿ', 'ಿಸುತ್ತೇನೆ', 'ಿಸುತ್ತೇವೆ',
+    'ುತ್ತವೆ', 'ತ್ತಾನೆ', 'ತ್ತಾಳೆ', 'ತ್ತಾರೆ', 'ುತ್ತದೆ', 'ತ್ತೀರಿ', 'ತ್ತೇನೆ', 'ತ್ತೇವೆ',
+    'ುತದೆ', 'ುತಾರೆ', 'ುತಾನೆ', 'ುತಾಳೆ', 'ಸುತದೆ',
+    'ಿಸಿದರು', 'ಿಸಿದನು', 'ಿಸಿದಳು', 'ಿಸಿದವು', 'ಿಸಿತು', 'ಿದರು', 'ಿದನು', 'ಿದಳು', 'ಿದವು', 'ಿತು',
+    'ವಿತ್ತು', 'ಯಿತ್ತು', 'ಇತ್ತು', 'ದ್ದವು', 'ದ್ದರು', 'ದ್ದನು', 'ದ್ದಳು',
+    'ಿಸಲು', 'ಿಲು', 'ುವುದು', 'ಿಕೊಂಡು',
+    'ಲಾಗುತ್ತಿದೆ', 'ಲಾಗುತ್ತದೆ', 'ಲಾಗುವುದು', 'ಲಾಗುತ್ತವೆ', 'ಲಾಗಿದೆ', 'ಲಾಯಿತು',
+    'ಿರದ',
+}
 
 
 def join_root_suffix(root: str, suf: str) -> str:
@@ -123,9 +161,18 @@ def join_root_suffix(root: str, suf: str) -> str:
     return root + suf
 
 
-def decompose_word(word: str, dictionary: Set[str]) -> Tuple[Optional[str], Optional[str]]:
+def decompose_word(word: str, dictionary: Set[str], exact_only: bool = False) -> Tuple[Optional[str], Optional[str]]:
     """
     Decompose a surface Kannada word into a valid (root, suffix) pair if possible.
+
+    exact_only=True skips the vowel-ending-guessing stems_to_try fallback
+    below, trusting only a root that is *literally* in the dictionary with
+    no modification. Candidate generation (resolve_valid_surface_form) wants
+    the fuzzy fallback -- it's what finds a correction root at all. But
+    is_valid_surface_word, which hard-bypasses all correction the instant it
+    returns True, must not: as the dictionary grows, an unrelated real word
+    can coincidentally match a guessed vowel-ending stem (e.g. root[:-1]+'ಿ')
+    and silently certify a genuinely OCR-corrupted word as already-correct.
     """
     if word in dictionary:
         return word, ''
@@ -136,13 +183,35 @@ def decompose_word(word: str, dictionary: Set[str]) -> Tuple[Optional[str], Opti
 
             # Suffix normalization
             correct_suf = SUFFIX_NORMALIZATIONS.get(suf, suf)
-            if suf == 'ವನು':
-                correct_suf = 'ವನ್ನು'
-            elif suf == 'ಯನು':
-                correct_suf = 'ಯನ್ನು'
+
+            # 'ದ'/'ನ'/'ಅ' are oblique-stem case markers that only attach to
+            # a consonant-final stem (e.g. ಮನ+ದ needs a linking vowel first,
+            # giving ಮನೆಯ, not bare ಮನ+ದ). Unlike 'ಯ' -- which has its own
+            # glide-sandhi rule for vowel-final stems in join_root_suffix --
+            # pasting these directly onto a root that already ends in a
+            # vowel matra produces a non-word, e.g. ಇಲ್ಲಿ (here, vowel-final)
+            # + ದ reads as "ಇಲ್ಲಿದ", which isn't Kannada, even though both
+            # ಇಲ್ಲಿ and the surface form ಇಲ್ಲಿದ happen to arise from real
+            # dictionary/suffix pieces.
+            if suf in ('ದ', 'ನ', 'ಅ') and root and root[-1] in KANNADA_VOWEL_SIGNS:
+                continue
 
             if root in dictionary:
                 return root, correct_suf
+
+            if exact_only:
+                # Narrow exception, not the broad fuzzy fallback below: for
+                # a verb-only suffix, also accept the root's standard ು-final
+                # citation form (e.g. ಬಳಸಿರದ -> strip ಿರದ -> ಬಳಸ -> ಬಳಸು,
+                # which the dictionary actually lists; the bare consonant
+                # stem ಬಳಸ usually isn't listed on its own). This is a single
+                # structurally predictable reconstruction -- how Kannada
+                # dictionaries conventionally cite verbs -- not a guess among
+                # several vowel endings, so it doesn't reopen the coincidental-
+                # collision risk exact_only exists to close.
+                if suf in VERB_SUFFIXES and root + 'ು' in dictionary:
+                    return root + 'ು', correct_suf
+                continue
 
             # Try common vowel ending variants of the substantive stem (must be at least 2 chars)
             stems_to_try = [root, root + 'ಿ', root + 'ು', root + 'ಾ', root + 'ೆ']
@@ -152,6 +221,15 @@ def decompose_word(word: str, dictionary: Set[str]) -> Tuple[Optional[str], Opti
                 stems_to_try.append(root[:-1] + 'ಿ')
                 stems_to_try.append(root[:-1] + 'ೆ')
                 stems_to_try.append(root[:-1] + 'ು')
+                # root[:-1] alone (dropping the trailing vowel matra with
+                # nothing) covers verb roots whose bare consonant-final form
+                # is itself the dictionary entry, e.g. ಬೇಡು+ತ್ತಾನೆ decomposes
+                # with root=ಬೇಡು, and "ಬೇಡ" (not "ಬೇಡು") is what's listed.
+                # Scoped to verb suffixes only -- for a non-verb suffix this
+                # is unsound and risks colliding with an unrelated nominal
+                # particle that happens to share the same shortened prefix.
+                if suf in VERB_SUFFIXES:
+                    stems_to_try.append(root[:-1])
 
             # Initials/single-letter prefixes that should never act as inflected verb/noun stems
             INITIALS = {'ವಿ', 'ಡಾ', 'ಶ್ರೀ', 'ಪ್ರೊ', 'ಎ', 'ಆ', 'ಈ', 'ಏ', 'ಓ', 'ಒ', 'ಎಸ್', 'ಜಿ', 'ಕೆ', 'ಪಿ', 'ಟಿ', 'ಎಂ', 'ಎಲ್', 'ಆರ್', 'ಬಿ', 'ಸಿ', 'ಡಿ', 'ಹೆಚ್', 'ಎನ್'}

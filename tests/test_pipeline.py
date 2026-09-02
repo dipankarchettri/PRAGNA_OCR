@@ -11,10 +11,11 @@ import unittest
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE_DIR)
 
+from pipeline import init_pipeline
 from pipeline.correction.tokenizer import tokenize, reconstruct
 from pipeline.correction.ocr_repairs import normalize_script, clean_unicode_glitches, normalize_indic_repha
 from pipeline.correction.morphology import decompose_word, join_root_suffix
-from pipeline.correction.dictionary import load_dictionary, get_dictionary
+from pipeline.correction.dictionary import get_dictionary
 from pipeline.correction.edit_distance import weighted_edit_distance
 from pipeline.correction.corrector import correct_text, suggest_kannada_word
 from pipeline.exporter.pdf_generator import generate_pdf_from_text
@@ -23,9 +24,15 @@ from pipeline.exporter.pdf_generator import generate_pdf_from_text
 class TestKannadaPipeline(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        # Load dictionary
-        dic_path = os.path.join(BASE_DIR, 'data', 'kn_IN.dic')
-        load_dictionary(dic_path)
+        # Load dictionary AND the real n-gram corpus model, matching the
+        # exact initialization every real entry point (process_text_input,
+        # process_document) goes through. Loading the dictionary alone left
+        # candidate-ranking behavior that depends on real corpus frequency
+        # (see corrector.MIN_CORPUS_ATTESTATION / KEEP_ORIGINAL_BASE_COST)
+        # completely untested, since score_candidate() has no differentiating
+        # signal at all against an untrained model -- a gap that let a real
+        # ranking regression pass silently.
+        init_pipeline()
 
     def test_tokenization(self):
         text = "ಕನ್ನಡ 123 English ! ಶಾಂತಿ ."

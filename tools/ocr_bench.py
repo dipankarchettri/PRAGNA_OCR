@@ -62,6 +62,22 @@ def char_error_rate(hyp: str, ref: str) -> float:
     return prev[len(hyp)] / len(ref)
 
 
+def word_error_rate(hyp: str, ref: str) -> float:
+    """Levenshtein distance over whitespace-split words, normalized by reference word count."""
+    ref_words = ref.split()
+    hyp_words = hyp.split()
+    if not ref_words:
+        return 0.0 if not hyp_words else 1.0
+
+    prev = list(range(len(hyp_words) + 1))
+    for j, rw in enumerate(ref_words, 1):
+        cur = [j]
+        for i, hw in enumerate(hyp_words, 1):
+            cur.append(min(prev[i] + 1, cur[i - 1] + 1, prev[i - 1] + (hw != rw)))
+        prev = cur
+    return prev[len(hyp_words)] / len(ref_words)
+
+
 LATIN_RUN_RE = re.compile(r'[A-Za-z]{2,}')
 
 
