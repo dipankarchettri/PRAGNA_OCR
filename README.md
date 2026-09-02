@@ -73,9 +73,63 @@ source venv/bin/activate
 # Install dependencies
 pip install -r requirements.txt
 
-# Initialize Hunspell lexicon and download Noto Sans Kannada TTF font
+# Verify assets (dictionary, fonts, tessdata all ship with the repo)
 python setup.py
 ```
+
+### 3. Drop in the n-gram language model ⚠️
+
+**The pipeline runs without this file, but not well — and it will not tell you it is
+missing.** Everything else the project needs is in the repo; this one file is 358 MB,
+past GitHub's 100 MB per-file limit, so it is distributed separately. Ask the team for
+`ngram_model.pkl.gz` and put it here:
+
+```
+PRAGNA_OCR/
+└── data/
+    └── ngram_model.pkl.gz     ← here, exactly this name
+```
+
+No config or environment variable — the path is resolved relative to the repo. Then
+confirm it actually loaded:
+
+```bash
+./venv/bin/python -c "
+from pipeline import init_pipeline; init_pipeline()
+from pipeline.correction.ngram import has_corpus_counts, corpus_frequency
+print('corpus loaded:', has_corpus_counts())
+print('ಕಾಫಿ frequency:', corpus_frequency('ಕಾಫಿ'))"
+```
+
+You want `corpus loaded: True`. If it prints `False` the file was not found, and the
+failure is silent: the engine falls back to unigram counts padded from the dictionary
+word list, which disables the corpus-frequency gate that decides whether a proposed
+correction is allowed at all. It still runs and still "corrects" — as a materially less
+precise engine than the one every benchmark number in this repo describes. A clean
+startup is *not* evidence the model loaded; check the line.
+
+First load takes ~30 s and about 4.7 GB of RAM. The web dashboard warms it on a
+background thread at boot, so the page serves immediately and `/api/system-status`
+reports `warmup` as `pending` / `loading` / `ready` / `failed`.
+
+### What ships in the repo, and what does not
+
+| Asset | Location | In git? | Needed for |
+|---|---|---|---|
+| Kannada dictionary, 589,521 entries | `data/kn_IN.dic.gz` | ✅ 2.5 MB, gzipped | everything — read in place, no unpacking |
+| Hunspell affix rules | `data/kn_IN.aff` | ✅ | suffix expansion |
+| Tesseract LSTM models | `tessdata/` | ✅ | OCR |
+| Noto Sans Kannada + Latin fallback | `web/static/fonts/` | ✅ | PDF export |
+| Real page/transcript fixtures | `tests/fixtures/real/` | ✅ | the honest accuracy measurement |
+| **N-gram language model** | `data/ngram_model.pkl.gz` | ❌ **358 MB — get from the team** | correction quality |
+| Filtered literary corpus | `data/corpus_literary/` | ❌ | only `correction_bench.py --synthetic` |
+
+A note on the dictionary, since it is easy to break: an uncompressed `data/kn_IN.dic`
+takes precedence over the `.gz` if present. That is deliberate — drop a different `.dic`
+in to experiment — but it means `setup.py`'s download fallback, which fetches the *stock*
+LibreOffice `kn_IN` (19,645 entries, 3% of this vocabulary), would silently downgrade the
+engine. `setup.py` skips it whenever the `.gz` is present, and says so loudly if it ever
+does run.
 
 ---
 
@@ -127,8 +181,35 @@ python cli.py scan.pdf --json
 
 Run the automated test suite:
 ```bash
-./venv/bin/python tests/test_pipeline.py
+./venv/bin/python tests/test_pipeline.py             # 26 tests
+./venv/bin/python tests/test_correction_precision.py # 15 — words that must NOT change
+./venv/bin/python tests/test_reflow.py               # 14 — paragraph reconstruction
 ```
+
+### Measuring the correction engine
+
+`tools/correction_bench.py` is the gate every change to `pipeline/correction/` has to
+clear. It reports CER and WER before/after, and — more importantly — splits changes into
+`fixed` / `broke` / `other`:
+
+```bash
+./venv/bin/python tools/correction_bench.py --pages 'tests/fixtures/real/*.png'
+```
+
+**CER alone is not the metric.** This corpus feeds LLM training, where a confidently
+wrong "fix" silently corrupts the data in a way that is far harder to catch downstream
+than an untouched OCR error. A change that lowers CER while raising `broke` is a
+regression here, whatever it does to the headline number.
+
+Current state on the nine real page/transcript pairs — the honest test, since they are
+genuine book scans rather than typeset pages:
+
+| | CER | WER | fixed | broke | precision |
+|---|---|---|---|---|---|
+| uncorrected Tesseract | 0.0558 | 0.2889 | — | — | — |
+| after correction | **0.0520** | **0.2697** | 10 | **0** | **1.000** |
+
+Requires the n-gram model to be in place — without it these numbers do not reproduce.
 
 ### Tuning OCR accuracy
 
@@ -154,7 +235,7 @@ basename and it reports true character error rate and ranks by that instead.
 | Setting | Default | Rationale |
 |---|---|---|
 | `--lang` | `kan` | Adding `eng` to a monolingual Kannada page makes Tesseract emit Latin for ambiguous glyphs; the correction engine skips non-Kannada tokens, so that output is unrecoverable. |
-| `--psm` | `6` | Measured best on single-column book pages. Use `3` for genuinely mixed layouts. |
+| `--psm` | `3` | Automatic segmentation. Wins or ties on 8 of 9 real pages (mean raw CER 0.0549 vs 0.0585 for `6`), and improves the corrected result too. Was `6` until real transcripts existed — that choice came from proxy metrics that reward the confident output `6` produces *while segmenting a page wrongly*. Try `6` on a page that genuinely is one uniform block. |
 | `--oem` | `1` | LSTM only. The `tessdata_best` models ship no legacy engine. |
 | `--dpi` | `400` | Kannada ottakshara (subscript conjuncts) alias badly at 300. |
 
@@ -179,7 +260,8 @@ PRAGNA_OCR/
 │   │   └── tesseract_engine.py
 │   ├── correction/             # Indic Morphological Correction Engine
 │   │   ├── tokenizer.py        # Tokenizer & punctuation handling
-│   │   ├── ocr_repairs.py      # Script-level Repha & Unicode normalization
+│   │   ├── graphemes.py        # Akshara (grapheme-cluster) segmentation
+│   │   ├── ocr_repairs.py      # Script-level Repha, joiner & Unicode normalization
 │   │   ├── morphology.py       # Kannada Sandhi, suffix stripping & decomposition
 │   │   ├── dictionary.py       # Hunspell kn_IN loader & core vocabulary
 │   │   ├── edit_distance.py    # Weighted Levenshtein & optical confusion matrices
@@ -187,6 +269,7 @@ PRAGNA_OCR/
 │   │   └── corrector.py        # Dynamic candidate generation & ranking
 │   └── exporter/               # PDF, TXT & JSON exporters
 │       ├── pdf_generator.py    # Layout-preserved Unicode PDF builder
+│       ├── reflow.py           # Line boxes → paragraphs for the training corpus
 │       └── text_exporter.py    # Structured text and JSON report builder
 ├── web/                        # Flask Web Application & Dashboard
 │   ├── app.py                  # REST API & SSE streaming endpoints
@@ -196,11 +279,23 @@ PRAGNA_OCR/
 │   │   └── fonts/              # Noto Sans Kannada Unicode TTF
 │   └── templates/
 │       └── index.html          # Web dashboard template
-├── data/                       # Hunspell kn_IN.dic & kn_IN.aff dictionary files
+├── tools/                      # Measurement & maintenance scripts
+│   ├── correction_bench.py     # CER/WER + fixed/broke — the gate for engine changes
+│   ├── ocr_bench.py            # Tesseract PSM/upscale sweeps
+│   ├── build_eval_set.py       # Typeset synthetic eval pages from clean text
+│   └── build_ngram_model.py    # Rebuild the n-gram cache (maintainer-only)
+├── tessdata/                   # Tesseract LSTM models (tessdata_best) — in git
+├── data/
+│   ├── kn_IN.dic.gz            # 589,521-entry dictionary — in git, read in place
+│   ├── kn_IN.aff               # Hunspell affix rules — in git
+│   └── ngram_model.pkl.gz      # ⚠️ NOT in git (358 MB) — get from the team
 ├── tests/                      # Automated test suite
-│   └── test_pipeline.py
+│   ├── test_pipeline.py
+│   ├── test_correction_precision.py
+│   ├── test_reflow.py
+│   └── fixtures/real/          # Real page + transcript pairs — the honest test
 ├── cli.py                      # Command-line interface
-├── setup.py                    # Asset downloader & environment validator
+├── setup.py                    # Asset verifier & environment validator
 ├── requirements.txt            # Python dependencies
 └── README.md
 ```
