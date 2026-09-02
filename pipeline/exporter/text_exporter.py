@@ -43,6 +43,27 @@ def export_combined_text(
     return output_path
 
 
+def export_line_provenance(
+    provenance: List[Dict[str, Any]],
+    output_path: str
+) -> str:
+    """
+    One JSON object per surviving line: page, bbox, OCR confidence, the
+    paragraph it was reflowed into, and its text.
+
+    This is what makes the reflowed corpus auditable. Reflow joins lines and
+    drops running headers, so without provenance there is no way back from a
+    span of training text to the page and pixels it came from -- which is
+    exactly what you need when a downstream model turns out to have learned
+    something strange.
+    """
+    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+    with open(output_path, 'w', encoding='utf-8') as f:
+        for rec in provenance:
+            f.write(json.dumps(rec, ensure_ascii=False) + '\n')
+    return output_path
+
+
 def export_json_report(
     report_data: Dict[str, Any],
     output_path: str

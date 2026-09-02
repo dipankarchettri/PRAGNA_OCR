@@ -226,47 +226,78 @@ def extract_searchable_pdf_layout(pdf_path: str, pages: Optional[List[int]] = No
 
     doc = fitz.open(pdf_path)
     layout_lines = []
-    wanted_pages = set(pages) if pages is not None else None
 
-    for page_idx, page in enumerate(doc):
-        page_num = page_idx + 1
-        if wanted_pages is not None and page_num not in wanted_pages:
-            continue
-        page_rect = page.rect
-        page_width = page_rect.width
+    try:
+        # Visit only the requested pages. This used to walk every page of the
+        # document and `continue` past the unwanted ones, while process_document
+        # calls it once per mixed page -- quadratic in page count on exactly the
+        # documents that are already the slowest.
+        if pages is not None:
+            page_numbers = [p for p in sorted(set(pages)) if 1 <= p <= doc.page_count]
+        else:
+            page_numbers = range(1, doc.page_count + 1)
 
-        for b in _page_blocks_from_page(page):
-            if not b['is_valid']:
-                continue
-            text_content = b['text']
-            x0, y0, x1, y1 = b['x0'], b['y0'], b['x1'], b['y1']
+        for page_num in page_numbers:
+            page = doc.load_page(page_num - 1)
+            page_width = page.rect.width
+            page_center = page_width / 2.0
 
-            for line in text_content.splitlines():
-                line_clean = line.strip()
-                if not line_clean:
+            # "dict" rather than "blocks" because it carries a bbox for every
+            # individual line. The old code split a block's text on newlines and
+            # stamped EVERY resulting line with the enclosing block's bbox, so
+            # all lines of a paragraph reported an identical top, left, width and
+            # height. That makes per-line geometry meaningless: the reading-order
+            # sort had nothing to order lines within a block by, and anything
+            # asking "did this line stop short of the margin?" -- which is how
+            # the reflow exporter finds paragraph ends -- always got "no".
+            page_dict = page.get_text("dict")
+
+            for block in page_dict.get('blocks', []):
+                if block.get('type') != 0:      # 0 = text, 1 = image
+                    continue
+                block_lines = block.get('lines', [])
+                if not block_lines:
                     continue
 
-                # Determine alignment
-                block_width = x1 - x0
-                block_center = x0 + (block_width / 2.0)
-                page_center = page_width / 2.0
+                def _line_text(ln):
+                    return ''.join(span.get('text', '') for span in ln.get('spans', []))
 
+                # Validity stays a per-block judgement: a page can mix a
+                # trustworthy block with a mojibake one, and a single line is
+                # too little text to classify reliably.
+                block_text = '\n'.join(_line_text(ln) for ln in block_lines).strip()
+                if not block_text or not _page_text_is_valid(block_text):
+                    continue
+
+                # Alignment likewise stays a block property -- a centred heading
+                # is a centred *block*, whereas the last line of a left-aligned
+                # paragraph is short without being centred.
+                bx0, _by0, bx1, _by1 = block['bbox']
+                block_width = bx1 - bx0
+                block_center = bx0 + (block_width / 2.0)
                 if block_width < page_width * 0.6 and abs(block_center - page_center) < (page_width * 0.1):
                     alignment = 'C'
-                elif x0 > (page_width * 0.55):
+                elif bx0 > (page_width * 0.55):
                     alignment = 'R'
                 else:
                     alignment = 'L'
 
-                layout_lines.append({
-                    'text': line_clean,
-                    'alignment': alignment,
-                    'top': y0,
-                    'left': x0,
-                    'width': block_width,
-                    'height': y1 - y0,
-                    'page_num': page_num
-                })
+                for ln in block_lines:
+                    text = _line_text(ln).strip()
+                    if not text:
+                        continue
+                    lx0, ly0, lx1, ly1 = ln['bbox']
+                    layout_lines.append({
+                        'text': text,
+                        'alignment': alignment,
+                        'top': ly0,
+                        'left': lx0,
+                        'width': lx1 - lx0,
+                        'height': ly1 - ly0,
+                        'page_num': page_num
+                    })
+    finally:
+        doc.close()
 
     return layout_lines
 

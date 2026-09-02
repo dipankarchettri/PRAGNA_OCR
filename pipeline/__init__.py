@@ -29,7 +29,10 @@ from .exporter import (
     generate_pdf_from_layout,
     export_pages_to_text,
     export_combined_text,
-    export_json_report
+    export_line_provenance,
+    export_json_report,
+    reflow_lines,
+    corpus_stats
 )
 
 _INITIALIZED = False
@@ -194,25 +197,38 @@ def process_document(
             if progress_callback:
                 progress_callback({'stage': 'correcting', 'message': 'Applying morphological cleaning and Sandhi rules...', 'percent': 40})
 
-            corrected_lines, corrections = correct_layout_lines(layout_lines)
-            all_layout_lines.extend(corrected_lines)
-            all_corrections.extend(corrections)
-
-            # Group by page
-            pages_map = {}
+            # Correct once, per page, and derive both outputs from that.
+            #
+            # This used to run the corrector TWICE over identical content:
+            # correct_layout_lines for the PDF, then correct_text on the same
+            # text re-joined into a page, for the .txt. The two could disagree,
+            # because the n-gram model sees different neighbours line-by-line
+            # than it does across a joined page -- so the exported PDF and the
+            # exported text could carry different corrections of the same word.
+            # It also made the digital path structurally unlike the OCR path
+            # below, which has always derived its page text from the corrected
+            # lines.
+            lines_by_page: Dict[int, List[Dict[str, Any]]] = {}
             for line in layout_lines:
-                p = line.get('page_num', 1)
-                pages_map.setdefault(p, []).append(line['text'])
+                lines_by_page.setdefault(line.get('page_num', 1), []).append(line)
 
             for p in fully_digital_pages:
-                raw_page_text = '\n'.join(pages_map.get(p, []))
-                corr_res = correct_text(raw_page_text)
+                page_lines = lines_by_page.get(p, [])
+                corrected_lines, page_corrections = correct_layout_lines(page_lines)
+                all_layout_lines.extend(corrected_lines)
+                all_corrections.extend(page_corrections)
+
                 pages_by_num[p] = {
                     'page_num': p,
-                    'raw_text': raw_page_text,
-                    'corrected_text': corr_res['corrected'],
-                    'has_errors': corr_res['has_errors'],
-                    'corrections': corr_res['corrections']
+                    'raw_text': '\n'.join(l['text'] for l in page_lines),
+                    # is_likely_non_text is always False here (these lines were
+                    # never OCR'd from pixels, so they carry no confidence), but
+                    # filtering uniformly keeps both paths identical in shape.
+                    'corrected_text': '\n'.join(
+                        l['text'] for l in corrected_lines if not l.get('is_likely_non_text')
+                    ),
+                    'has_errors': len(page_corrections) > 0,
+                    'corrections': page_corrections
                 }
 
         if needs_ocr_pages:
@@ -370,9 +386,24 @@ def process_document(
     # 1. Page text files
     txt_files = export_pages_to_text(pages_result, output_dir)
 
-    # 2. Combined text
+    # 2. Corpus text.
+    #
+    # Two files, because they answer different questions and one cannot do
+    # both. The reflowed .txt is the training-data product: paragraphs, no
+    # running headers, hyphen breaks healed, NFC. The .lines.txt is the
+    # verbatim line-per-box output this pipeline has always produced, kept
+    # because it is what you want when auditing a page against its scan.
     combined_txt_path = os.path.join(output_dir, f"{stem}_corrected.txt")
-    export_combined_text(full_corrected_text, combined_txt_path)
+    lines_txt_path = os.path.join(output_dir, f"{stem}_corrected.lines.txt")
+    jsonl_path = os.path.join(output_dir, f"{stem}_corrected.jsonl")
+
+    reflowed_text, line_provenance = reflow_lines(all_layout_lines)
+    export_combined_text(reflowed_text, combined_txt_path)
+    export_combined_text(full_corrected_text, lines_txt_path)
+    export_line_provenance(line_provenance, jsonl_path)
+
+    reflow_stats = corpus_stats(reflowed_text)
+    verbatim_stats = corpus_stats(full_corrected_text)
 
     # 3. PDF Generation (layout-preserving)
     pdf_out_path = None
@@ -397,8 +428,17 @@ def process_document(
         'generated_files': {
             'text_files': txt_files,
             'combined_text': combined_txt_path,
+            'verbatim_lines_text': lines_txt_path,
+            'line_provenance': jsonl_path,
             'pdf': pdf_out_path,
             'images': saved_images_paths
+        },
+        # Mean chars/line before and after reflow. tools/filter_literary_corpus.py
+        # rejects a file as OCR output below ~55, so this is the number that
+        # decides whether this document's text is usable as corpus at all.
+        'corpus_stats': {
+            'reflowed': reflow_stats,
+            'verbatim_lines': verbatim_stats
         },
         'corrections_summary': all_corrections,
         'pages': pages_result
@@ -422,6 +462,9 @@ def process_document(
         'pdf_path': pdf_out_path,
         'json_path': json_report_path,
         'combined_txt_path': combined_txt_path,
+        'lines_txt_path': lines_txt_path,
+        'jsonl_path': jsonl_path,
+        'corpus_stats': report_data['corpus_stats'],
         'output_dir': output_dir,
         'latency_seconds': total_time
     }
