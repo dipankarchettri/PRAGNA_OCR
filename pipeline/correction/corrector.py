@@ -136,7 +136,31 @@ def heal_split_tokens(tokens: List[Dict[str, Any]], dictionary: Set[str]) -> Tup
             w1 = tokens[i]['value']
             w2 = tokens[i+2]['value']
 
-            if w1 not in PROTECTED_TOKENS and w2 not in PROTECTED_TOKENS:
+            # A merge is only ever justified when the second half is a
+            # *fragment*. This one condition gates all three cases below, and
+            # it is the single most important guard in this function.
+            #
+            # A genuine OCR split leaves something that is not a word --
+            # "ಲೆಯಲ್ಲಿ", "ವಾಗಬೇಕಿದೆ" -- which is exactly why rejoining them is
+            # safe. If w2 stands on its own as a complete valid word, the space
+            # before it is ordinary word spacing, however suffix-shaped w2
+            # looks: "ಇದ್ದರೆ" is a real bound suffix elsewhere, but on its own
+            # it is the plain standalone word "if [there] is". Merging there
+            # destroys a real word boundary, which is strictly worse than
+            # leaving a split alone -- a split word is visibly broken to
+            # anything reading the corpus later, while a wrongly merged pair
+            # reads as one plausible token and is effectively undetectable.
+            #
+            # Tested with is_valid_surface_word, not bare `in dictionary`.
+            # Membership alone misses every inflected form the .dic does not
+            # list literally, and that is what made this fire on good text:
+            # measured over tests/fixtures/eval, "ಪರಿಚಯವು ಅವರು" was merged
+            # because ಪರಿಚಯವು (= ಪರಿಚಯ + ವು) has no literal entry, and
+            # "ಸ್ಪರ್ಶಿಸಿ ಅವರ" because Case B only looked at w1. Across 24 clean
+            # pages this class of merge broke 50 words against 2 genuine fixes;
+            # gating all three cases on it cut that to 10.
+            if (w1 not in PROTECTED_TOKENS and w2 not in PROTECTED_TOKENS
+                    and not is_valid_surface_word(w2, dictionary)):
                 joined = w1 + w2
                 should_join = False
 
@@ -149,27 +173,22 @@ def heal_split_tokens(tokens: List[Dict[str, Any]], dictionary: Set[str]) -> Tup
                 # pronouns in their own right (e.g. "ಚ ಯ", or a longer
                 # phrase like "ಯಮದಾಹ್ಯೋ ಯ"), so bare membership in SUFFIXES
                 # alone isn't enough evidence to merge them away.
-                # Same ambiguity Case C guards against: a suffix-shaped w2
-                # doesn't mean the space was a mistake if w1 and w2 are ALSO
-                # each a complete, independently valid word on their own
-                # (e.g. "ಅನುಕೂಲ ಇದ್ದರೆ" / "ಉದ್ದ ಇದ್ದರೆ" -- "ಇದ್ದರೆ" is a
-                # real bound suffix elsewhere, but here it's the ordinary
-                # standalone word "if [there] is", and blindly concatenating
-                # it onto w1 with no sandhi glide produces a non-word).
                 if (w2 in SUFFIXES or w2.startswith(('ವಾಗಿ', 'ವಾಗಲು', 'ವಾಗುವುದು', 'ವಾಗಬೇಕಿದೆ', 'ವಾಗಿದೆ', 'ವಾಗುತ್ತದೆ'))) \
-                        and w2 not in ('ಯ', 'ದ', 'ನ', 'ಅ', 'ಉ', 'ವು') \
-                        and not (w1 in dictionary and w2 in dictionary):
+                        and w2 not in ('ಯ', 'ದ', 'ನ', 'ಅ', 'ಉ', 'ವು'):
                     should_join = True
-                # Case B: First word is not a valid word, but joined form IS a valid dictionary word
-                elif w1 not in dictionary and (joined in dictionary or decompose_word(joined, dictionary)[0] is not None):
-                    should_join = True
-                # Case C: Joint compound word is in dictionary -- but not
-                # when both halves are ALSO independently valid dictionary
-                # words on their own: Kannada often allows a compound to be
-                # written either as one word or as two separate words (e.g.
-                # "ಹಣ್ಣು ಹಂಪಲು" / "ಹಣ್ಣುಹಂಪಲು" are both real), so the joined
-                # form being listed isn't evidence the space was a mistake.
-                elif joined in dictionary and not (w1 in dictionary and w2 in dictionary):
+                # Case B: the joined form is itself a real word. Given the
+                # outer guard has already established w2 cannot stand alone,
+                # "fragment that completes a real word when reattached" is
+                # about as strong as split evidence gets.
+                #
+                # This deliberately says nothing about w1. It used to require
+                # w1 to be invalid, on the theory that a valid w1 means the
+                # space is real -- but w1 is very often a valid word *prefix*
+                # that is also independently valid (ಹಿನ್ನೆ in
+                # "ಹಿನ್ನೆ ಲೆಯಲ್ಲಿ" -> ಹಿನ್ನೆಲೆಯಲ್ಲಿ), so that test rejected
+                # exactly the splits this function exists to repair. The w2
+                # guard is what carries the precision; w1 carries none.
+                elif joined in dictionary or decompose_word(joined, dictionary)[0] is not None:
                     should_join = True
 
                 if should_join:

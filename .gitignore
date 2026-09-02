@@ -63,3 +63,13 @@ data/corpus_literary_report.csv
 # meant to live in git. Re-derive data/corpus_literary/ from this via
 # tools/filter_literary_corpus.py if it's ever lost.
 data/kanaja_docx_raw/
+
+# Evaluation fixture page images -- 341MB of PNGs, and the noise in the
+# degraded variants makes them incompressible. Regenerate deterministically
+# (fixed seed + the bundled Noto font) with:
+#     python tools/build_eval_set.py --docs 12 --degrade 0,1,2,3
+# The level-0 reference texts ARE committed, so a change in what the harness
+# scores against shows up as a reviewable diff.
+tests/fixtures/eval/*.png
+tests/fixtures/eval/*_d[123].txt
+tests/fixtures/eval/*_d[123].para.txt

@@ -38,6 +38,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from PIL import Image
+from rapidfuzz.distance import Levenshtein
 from pipeline.ingestion import load_and_preprocess_image, normalize_resolution
 from pipeline.ocr import ocr_image_with_layout
 from pipeline.correction import load_dictionary, get_dictionary
@@ -47,19 +48,19 @@ from pipeline.correction.tokenizer import tokenize
 
 
 def char_error_rate(hyp: str, ref: str) -> float:
-    """Levenshtein distance over characters, normalized by reference length."""
+    """
+    Levenshtein distance over characters, normalized by reference length.
+
+    Whitespace is collapsed on both sides first, so this metric is deliberately
+    blind to line-break placement -- it measures recognition, not layout. The
+    reflow quality of the exported corpus is a separate concern; see
+    pipeline/exporter/reflow.py.
+    """
     ref = ' '.join(ref.split())
     hyp = ' '.join(hyp.split())
     if not ref:
         return 0.0 if not hyp else 1.0
-
-    prev = list(range(len(hyp) + 1))
-    for j, rc in enumerate(ref, 1):
-        cur = [j]
-        for i, hc in enumerate(hyp, 1):
-            cur.append(min(prev[i] + 1, cur[i - 1] + 1, prev[i - 1] + (hc != rc)))
-        prev = cur
-    return prev[len(hyp)] / len(ref)
+    return Levenshtein.distance(hyp, ref) / len(ref)
 
 
 def word_error_rate(hyp: str, ref: str) -> float:
@@ -68,14 +69,7 @@ def word_error_rate(hyp: str, ref: str) -> float:
     hyp_words = hyp.split()
     if not ref_words:
         return 0.0 if not hyp_words else 1.0
-
-    prev = list(range(len(hyp_words) + 1))
-    for j, rw in enumerate(ref_words, 1):
-        cur = [j]
-        for i, hw in enumerate(hyp_words, 1):
-            cur.append(min(prev[i] + 1, cur[i - 1] + 1, prev[i - 1] + (hw != rw)))
-        prev = cur
-    return prev[len(hyp_words)] / len(ref_words)
+    return Levenshtein.distance(hyp_words, ref_words) / len(ref_words)
 
 
 LATIN_RUN_RE = re.compile(r'[A-Za-z]{2,}')
@@ -114,12 +108,17 @@ def run_config(img, lang, psm, oem, dictionary):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('images', nargs='+')
-    ap.add_argument('--models', default='kan,kanbest',
-                    help='comma-separated traineddata names in tessdata/ (default: kan,kanbest)')
+    ap.add_argument('--models', default='kan',
+                    help='comma-separated traineddata names in tessdata/ (default: kan)')
     ap.add_argument('--psm', default='3,4,6', help='comma-separated PSM values (default: 3,4,6)')
     ap.add_argument('--oem', default='1', help='comma-separated OEM values (default: 1)')
     ap.add_argument('--upscale', default='0,1', help='0=off, 1=on (default: both)')
     ap.add_argument('--with-eng', action='store_true', help='also try <model>+eng')
+    ap.add_argument('--contrast', action='store_true',
+                    help='apply the +20%% contrast boost before OCR. Off by default so the '
+                         'sweep measures the production path -- process_document leaves '
+                         'contrast alone and picks the boosted run per page by confidence '
+                         '(_ocr_with_adaptive_contrast), it does not boost unconditionally.')
     ap.add_argument('--dump', metavar='DIR', help='write each config output to DIR')
     args = ap.parse_args()
 
@@ -143,7 +142,7 @@ def main():
 
         rows = []
         for up in [bool(int(u)) for u in args.upscale.split(',')]:
-            img = load_and_preprocess_image(image_path, enhance_contrast=True, upscale=up)
+            img = load_and_preprocess_image(image_path, enhance_contrast=args.contrast, upscale=up)
             for model in models:
                 for psm in [int(v) for v in args.psm.split(',')]:
                     for oem in [int(v) for v in args.oem.split(',')]:

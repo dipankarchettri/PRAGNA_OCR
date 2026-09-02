@@ -32,6 +32,7 @@ python setup.py
 ```bash
 # Run the full test suite (plain unittest, no pytest)
 ./venv/bin/python tests/test_pipeline.py
+./venv/bin/python tests/test_correction_precision.py   # words that must NOT change
 
 # Run a single test case/method
 ./venv/bin/python -m unittest tests.test_pipeline.TestKannadaPipeline.test_dynamic_ocr_repairs -v
@@ -49,9 +50,49 @@ python cli.py --batch ./scans/ --output-dir ./batch_results/
 # drop a same-basename .txt transcript next to the image to get real CER instead)
 ./venv/bin/python tools/ocr_bench.py page.jpg --psm 3,4,6 --upscale 0,1
 ./venv/bin/python tools/ocr_bench.py page.jpg --dump ./bench_out
+
+# Build the evaluation fixture set (deterministic; images are gitignored)
+./venv/bin/python tools/build_eval_set.py --docs 12 --degrade 0,1,2,3
+
+# Measure the correction engine: CER/WER before vs after + fixed/broke counts
+./venv/bin/python tools/correction_bench.py --pages 'tests/fixtures/eval/*_p0??.png'
+./venv/bin/python tools/correction_bench.py --synthetic 200   # smoke test, no ground truth
 ```
 
-Always run `tests/test_pipeline.py` after touching anything under `pipeline/correction/` or `pipeline/exporter/`.
+Always run `tests/test_pipeline.py` and `tests/test_correction_precision.py` after touching
+anything under `pipeline/correction/` or `pipeline/exporter/`.
+
+## Measuring changes
+
+`tools/build_eval_set.py` typesets clean Kannada book text from
+`data/kanaja_docx_raw/` into page images at four degradation levels, writing the exact text
+it laid out as the reference. `tools/correction_bench.py` then scores the engine on them.
+
+**Read `tools/build_eval_set.py`'s docstring before trusting a number from it.** These are
+typeset pages, not scans — a deterministic regression gate, not evidence about real book
+scans. Real page/transcript pairs dropped into `tests/fixtures/eval/` as `page.jpg` +
+`page.txt` are the honest test. (The obvious shortcut — LibreOffice `.docx`→PDF, then read
+the PDF's text layer — was tried and does not work here: on this corpus LibreOffice emits
+justified Kannada with **no space characters at all** and duplicates matras, so the
+"reference" was itself wrong. Hence typesetting.)
+
+**CER alone is not the metric.** The bench reports `fixed` / `broke` separately on purpose:
+a wrong correction silently corrupts training data, where an untouched OCR error stays
+visible downstream. An engine that lowers CER while raising `broke` is a regression.
+
+Measured on 24 typeset pages (Tesseract `kan`, psm 6), before → after the space-merge
+precision fix:
+
+| | CER | WER | fixed | broke | precision |
+|---|---|---|---|---|---|
+| uncorrected baseline | 0.0047 | 0.0310 | — | — | — |
+| corrector, before fix | 0.0056 | 0.0450 | 2 | 50 | 0.038 |
+| corrector, after fix | **0.0050** | **0.0335** | 2 | **4** | **0.333** |
+
+Note what the baseline says: Tesseract reads these clean pages at 0.47% CER, so there is
+almost nothing for the corrector to fix, and it is still slightly net-negative here. Its
+value has to show up on degraded and genuinely scanned pages — which is what the `--degrade`
+ladder and real fixtures are for.
 
 ## Architecture
 
