@@ -68,17 +68,59 @@ MIN_SKEW_DEGREES = 0.3
 MAX_SKEW_DEGREES = 8.0
 
 
-def _text_row_variance(gray_arr: np.ndarray, angle: float) -> float:
+# Fraction of each edge discarded before scoring a rotation. Rotating with
+# expand=False fills the corners with white, and that wedge GROWS with the
+# angle -- so it adds row-to-row variance that has nothing to do with text
+# alignment, and the score climbs steadily as the angle gets more extreme. On a
+# low-contrast page, where the real text signal is weak, that artifact
+# dominates and the search runs to the edge of its range. Scoring only the
+# common interior area removes the artifact and makes angles comparable.
+# sin(8 degrees) is 0.14, so 10% covers the full search range.
+_SKEW_SCORE_MARGIN = 0.10
+
+
+def _otsu_threshold(arr: np.ndarray) -> int:
+    """Otsu's method: the grey level that best separates ink from paper."""
+    hist = np.bincount(arr.ravel(), minlength=256).astype(np.float64)
+    total = hist.sum()
+    if total <= 0:
+        return 128
+    levels = np.arange(256)
+    w_bg = np.cumsum(hist)
+    w_fg = total - w_bg
+    valid = (w_bg > 0) & (w_fg > 0)
+    if not valid.any():
+        return 128
+    sum_all = float((hist * levels).sum())
+    sum_bg = np.cumsum(hist * levels)
+    mean_bg = np.divide(sum_bg, w_bg, out=np.zeros_like(sum_bg), where=w_bg > 0)
+    mean_fg = np.divide(sum_all - sum_bg, w_fg, out=np.zeros_like(sum_bg), where=w_fg > 0)
+    between = w_bg * w_fg * (mean_bg - mean_fg) ** 2
+    between[~valid] = -1.0
+    return int(np.argmax(between))
+
+
+def _text_row_variance(binary_arr: np.ndarray, angle: float) -> float:
     """
-    Rotate a binarized grayscale array by `angle` degrees and score how
-    sharply text rows separate from the gaps between them (row-wise sum of
-    dark pixels; well-aligned text produces high-variance peaks and
-    troughs, skewed text blurs them together). Used to search for the
-    rotation angle that best un-skews the page.
+    Rotate a BINARIZED array by `angle` and score how sharply text rows
+    separate from the gaps between them: well-aligned text makes the row-wise
+    ink counts peak and trough, skewed text smears them together.
+
+    The input must already be binarized. This function's docstring used to say
+    "binarized" while every caller passed raw grayscale, and on a low-contrast
+    page (one measured here had std 15 and never got brighter than 192) the row
+    sums then track paper shading rather than text, leaving no real peak for
+    the search to find.
     """
-    img = Image.fromarray(gray_arr)
+    img = Image.fromarray(binary_arr)
     rotated = img.rotate(angle, resample=Image.BILINEAR, expand=False, fillcolor=255)
     arr = np.asarray(rotated, dtype=np.float64)
+
+    h, w = arr.shape
+    my, mx = int(h * _SKEW_SCORE_MARGIN), int(w * _SKEW_SCORE_MARGIN)
+    if h - 2 * my > 1 and w - 2 * mx > 1:
+        arr = arr[my:h - my, mx:w - mx]
+
     row_sums = (255.0 - arr).sum(axis=1)
     return float(row_sums.var())
 
@@ -100,15 +142,34 @@ def detect_skew_angle(img: Image.Image) -> float:
         gray = gray.resize((max(1, round(w * scale)), max(1, round(h * scale))), Image.BILINEAR)
     arr = np.asarray(gray, dtype=np.uint8)
 
+    # Binarize before searching. The projection profile is meant to count ink
+    # per row; on raw grayscale it instead measures paper shading, which on a
+    # faded or low-contrast page swamps the text signal entirely.
+    threshold = _otsu_threshold(arr)
+    binary = np.where(arr > threshold, np.uint8(255), np.uint8(0))
+
     # Coarse pass across the full allowed range, then a fine pass around the
     # best coarse angle -- cheaper than a single fine-grained sweep.
     coarse_angles = np.arange(-MAX_SKEW_DEGREES, MAX_SKEW_DEGREES + 0.01, 0.5)
-    best_coarse = max(coarse_angles, key=lambda a: _text_row_variance(arr, a))
+    best_coarse = max(coarse_angles, key=lambda a: _text_row_variance(binary, a))
 
-    fine_angles = np.arange(best_coarse - 0.5, best_coarse + 0.51, 0.1)
-    scored = [(a, _text_row_variance(arr, a)) for a in fine_angles]
+    # Clamped: an unclamped fine pass around a boundary coarse angle can return
+    # up to MAX_SKEW_DEGREES + 0.5, rotating further than the cap that exists
+    # precisely to bound the damage a wrong angle can do.
+    lo = max(-MAX_SKEW_DEGREES, best_coarse - 0.5)
+    hi = min(MAX_SKEW_DEGREES, best_coarse + 0.5)
+    scored = [(a, _text_row_variance(binary, a)) for a in np.arange(lo, hi + 0.01, 0.1)]
     best_angle, best_score = max(scored, key=lambda x: x[1])
-    baseline_score = _text_row_variance(arr, 0.0)
+    baseline_score = _text_row_variance(binary, 0.0)
+
+    # A best angle sitting on the edge of the search range means the score was
+    # still climbing when the range ran out -- i.e. no peak was found and this
+    # is not a measurement of skew at all. Observed on a real page: a straight
+    # but low-contrast scan scored best at the boundary, got rotated 8.5
+    # degrees, and Tesseract went from reading it correctly to returning
+    # nothing whatsoever. Declining to rotate is always the safe answer.
+    if abs(best_angle) >= MAX_SKEW_DEGREES - 0.05:
+        return 0.0
 
     # Require the corrected angle to meaningfully beat doing nothing --
     # guards against chasing noise on pages with little real text.

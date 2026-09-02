@@ -79,3 +79,7 @@ tests/fixtures/eval/*_d[123].para.txt
 # record is extended_data/kn_IN3.dic; see CLAUDE.md. The .aff rules ARE
 # committed, since they are small, hand-maintained and load-bearing.
 data/kn_IN.dic
+
+# Real page/transcript fixtures live in tests/fixtures/real/ and ARE committed
+# -- they are small, and they are the only honest measurement this pipeline
+# has. Source images came from the "Image nd Txt" working folder.

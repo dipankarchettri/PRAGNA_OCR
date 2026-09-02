@@ -69,6 +69,27 @@ class Doc:
 # Input loaders
 # ─────────────────────────────────────────────────────────────
 
+# A bracketed span that is mostly Latin letters is a transcriber's note about
+# the page, not text printed on it. Real pages in this corpus do contain Latin
+# in brackets -- "(Skylark)", "(Alastor)" appear as genuine content in a Kannada
+# essay on Shelley -- so the test is the script of the span, not the brackets.
+# Without this, one hand-written note ("[Note: a few characters near the top of
+# this page are faint...]") counted as 30 words the OCR failed to produce and
+# put that page's CER at 0.2466 against an actual 0.06.
+_ANNOTATION_RE = re.compile(r'\[[^\]]*\]')
+
+
+def strip_transcriber_notes(text: str) -> str:
+    """Remove bracketed English annotations from a ground-truth transcript."""
+    def drop(m: re.Match) -> str:
+        span = m.group()
+        latin = sum(1 for c in span if 'a' <= c.lower() <= 'z')
+        letters = sum(1 for c in span if c.isalpha())
+        return '' if letters and latin / letters > 0.5 else span
+
+    return _ANNOTATION_RE.sub(drop, text)
+
+
 def load_page_docs(paths: List[str], lang: str, psm: int, oem: int) -> List[Doc]:
     """OCR each image once; ground truth is the same-basename .txt file."""
     from pipeline.ingestion import load_and_preprocess_image, normalize_resolution, preprocess_for_ocr
@@ -84,14 +105,14 @@ def load_page_docs(paths: List[str], lang: str, psm: int, oem: int) -> List[Doc]
         img = load_and_preprocess_image(path, enhance_contrast=False)
         img = preprocess_for_ocr(normalize_resolution(img))
         lines = ocr_image_with_layout(img, lang=lang, psm=psm, oem=oem)
-        reference = open(gt_path, encoding='utf-8').read()
+        reference = strip_transcriber_notes(open(gt_path, encoding='utf-8').read())
         docs.append(Doc(os.path.basename(path), lines, reference))
     return docs
 
 
 def load_text_pair(noisy_path: str, clean_path: str) -> List[Doc]:
     noisy = open(noisy_path, encoding='utf-8').read()
-    clean = open(clean_path, encoding='utf-8').read()
+    clean = strip_transcriber_notes(open(clean_path, encoding='utf-8').read())
     lines = [{'text': l} for l in noisy.split('\n')]
     return [Doc(os.path.basename(noisy_path), lines, clean)]
 

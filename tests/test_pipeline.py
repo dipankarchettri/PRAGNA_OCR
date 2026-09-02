@@ -114,6 +114,74 @@ class TestKannadaPipeline(unittest.TestCase):
         self.assertGreater(os.path.getsize(out), 500)
 
 
+class TestSkewDetection(unittest.TestCase):
+    """
+    Deskew is the one preprocessing step that can turn a readable page into
+    nothing at all, so its failure mode is total rather than gradual.
+
+    Found on a real page (tests/fixtures/real/04.png): a straight but
+    low-contrast scan was measured at 8.5 degrees of skew, rotated, and
+    Tesseract went from reading it correctly -- 31 lines, 999 characters -- to
+    returning zero lines. That page alone sat at CER 1.0000.
+
+    Two causes, one test each below. The projection profile was computed on raw
+    grayscale despite its docstring saying binarized, so on a faded page it
+    measured paper shading rather than ink; and rotating with a white fill adds
+    corner wedges that grow with the angle, inflating row variance until the
+    search runs to the edge of its range.
+    """
+
+    def _page(self):
+        from PIL import Image
+        path = os.path.join(BASE_DIR, 'tests', 'fixtures', 'eval', '111_p001.png')
+        if not os.path.exists(path):
+            self.skipTest('eval fixtures not built (tools/build_eval_set.py)')
+        return Image.open(path).convert('L')
+
+    def test_a_low_contrast_straight_page_is_not_rotated(self):
+        """The real bug: faded page, no skew, detector returned the cap."""
+        from PIL import Image
+        from pipeline.ingestion.image_processor import detect_skew_angle
+
+        page = self._page()
+        # Compress the dynamic range the way a faded scan does. The real page
+        # measured std 15 and never got brighter than 192.
+        faded = Image.eval(page, lambda v: int(140 + v * 0.22))
+        self.assertEqual(detect_skew_angle(faded), 0.0,
+                         'a straight low-contrast page was assigned a skew angle')
+
+    def test_the_detector_never_returns_a_boundary_angle(self):
+        """
+        A best angle at the edge of the search range means the score was still
+        climbing when the range ran out -- no peak was found, so the number is
+        not a measurement of skew and must not be acted on.
+        """
+        from pipeline.ingestion.image_processor import (
+            detect_skew_angle, MAX_SKEW_DEGREES)
+        from PIL import Image
+
+        for transform in (lambda p: Image.eval(p, lambda v: int(150 + v * 0.15)),
+                          lambda p: Image.eval(p, lambda v: 255)):
+            with self.subTest():
+                angle = detect_skew_angle(transform(self._page()))
+                self.assertLess(abs(angle), MAX_SKEW_DEGREES,
+                                'returned an angle at the search boundary')
+
+    def test_genuine_skew_is_still_detected(self):
+        """The other side: the fix must not disable real deskewing."""
+        from PIL import Image
+        from pipeline.ingestion.image_processor import detect_skew_angle
+
+        page = self._page()
+        for true_angle in (1.5, 3.0, -3.0):
+            with self.subTest(angle=true_angle):
+                rotated = page.rotate(true_angle, resample=Image.BICUBIC,
+                                      expand=False, fillcolor=255)
+                # The detector returns the CORRECTION, so it opposes the skew.
+                detected = detect_skew_angle(rotated)
+                self.assertAlmostEqual(detected, -true_angle, delta=0.6)
+
+
 class TestAksharaSegmentation(unittest.TestCase):
     """
     Edit distance and candidate generation both count aksharas now, not code
