@@ -434,6 +434,50 @@ mark.apple-diff-pill.type-hybrid {
   box-shadow: 0 0 8px rgba(255, 214, 10, 0.15);
 }
 
+/* ── Correction Engine Selector ── */
+.engine-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  background: rgba(24, 24, 28, 0.6);
+  border: 1px solid var(--apple-border-subtle);
+  border-radius: var(--radius-sm);
+  margin-bottom: 12px;
+}
+
+.engine-bar .control-label {
+  margin: 0;
+  white-space: nowrap;
+}
+
+.engine-select {
+  max-width: 340px;
+}
+
+/* Carries the "first request loads the model" warning and any unavailability
+   reason from /api/system-status, so a disabled option explains itself
+   instead of just being greyed out. */
+.engine-hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  line-height: 1.4;
+}
+
+.engine-hint.warn {
+  color: var(--apple-amber, #f5a623);
+}
+
+.engine-hint.error {
+  color: var(--apple-red, #ff453a);
+}
+
+.control-field .engine-hint {
+  display: block;
+  margin-top: 6px;
+}
+
 /* ── Diff Color Legend Bar ── */
 .diff-legend-bar {
   display: flex;

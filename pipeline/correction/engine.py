@@ -38,6 +38,33 @@ def validate_engine(engine: str) -> str:
     return engine
 
 
+def engine_status() -> Dict[str, Dict[str, Any]]:
+    """
+    Which engines can actually run right now, and why not when they can't.
+
+    Exists so the web UI can offer the LM engines without pretending they are
+    installed -- selecting one on a machine with no torch and no vLLM server
+    would otherwise fail only after the user uploads a document. Cheap enough
+    to call per request: it checks an import and, at most, one HTTP call to a
+    local port.
+    """
+    from . import sarvam_lm, sarvam_vllm
+
+    if sarvam_vllm.is_available():
+        sarvam_ok, reason = True, ''
+    elif sarvam_lm.is_installed():
+        sarvam_ok, reason = True, ''
+    else:
+        sarvam_ok = False
+        reason = ('Needs torch + transformers (pip install -r requirements-sarvam.txt) '
+                  'or a running vLLM server (tools/serve_sarvam.sh).')
+
+    status = {ENGINE_RULE: {'available': True, 'reason': ''}}
+    for name in SARVAM_ENGINES:
+        status[name] = {'available': sarvam_ok, 'reason': reason}
+    return status
+
+
 def preload_engine(engine: str) -> None:
     """
     Load whatever the engine needs up front.

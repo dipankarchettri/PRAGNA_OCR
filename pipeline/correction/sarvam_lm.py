@@ -86,6 +86,13 @@ _tokenizer = None
 _device = None
 _load_lock = threading.Lock()
 
+# Serializes forward passes. The web app runs Flask threaded, so two browser
+# requests can land in the corrector at once; a single CUDA model entered
+# concurrently is a good way to get nondeterministic results or an allocator
+# fault. Contention costs nothing in the single-threaded CLI and benchmark
+# paths, which never hold it concurrently.
+_infer_lock = threading.Lock()
+
 
 def set_model(name: str) -> None:
     """
@@ -264,26 +271,27 @@ def score_sequences(
     import torch
 
     results: List[Tuple[float, int]] = []
-    for start in range(0, len(texts), batch_size):
-        batch = texts[start:start + batch_size]
-        enc = _tokenizer(batch, return_tensors='pt', padding=True)
-        enc = {k: v.to(_device) for k, v in enc.items()}
+    with _infer_lock:
+        for start in range(0, len(texts), batch_size):
+            batch = texts[start:start + batch_size]
+            enc = _tokenizer(batch, return_tensors='pt', padding=True)
+            enc = {k: v.to(_device) for k, v in enc.items()}
 
-        with torch.inference_mode():
-            logits = _model(**enc).logits
+            with torch.inference_mode():
+                logits = _model(**enc).logits
 
-        # Shift: logits[t] predicts token[t+1].
-        log_probs = torch.log_softmax(logits[:, :-1, :].float(), dim=-1)
-        targets = enc['input_ids'][:, 1:]
-        token_lp = log_probs.gather(-1, targets.unsqueeze(-1)).squeeze(-1)
+            # Shift: logits[t] predicts token[t+1].
+            log_probs = torch.log_softmax(logits[:, :-1, :].float(), dim=-1)
+            targets = enc['input_ids'][:, 1:]
+            token_lp = log_probs.gather(-1, targets.unsqueeze(-1)).squeeze(-1)
 
-        mask = enc['attention_mask'][:, 1:].to(token_lp.dtype)
-        totals = (token_lp * mask).sum(dim=-1)
-        counts = mask.sum(dim=-1)
+            mask = enc['attention_mask'][:, 1:].to(token_lp.dtype)
+            totals = (token_lp * mask).sum(dim=-1)
+            counts = mask.sum(dim=-1)
 
-        results.extend(
-            (float(t), int(c)) for t, c in zip(totals.tolist(), counts.tolist())
-        )
+            results.extend(
+                (float(t), int(c)) for t, c in zip(totals.tolist(), counts.tolist())
+            )
 
     return results
 
@@ -365,7 +373,7 @@ def complete(
     else:
         gen_kwargs['do_sample'] = False
 
-    with torch.inference_mode():
+    with _infer_lock, torch.inference_mode():
         out = _model.generate(**enc, **gen_kwargs)
 
     text = _tokenizer.decode(out[0][prompt_len:], skip_special_tokens=True)

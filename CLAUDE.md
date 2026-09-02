@@ -234,6 +234,24 @@ improvement for this project's goal.
 
 Flask + SSE: uploads go through `_SESSIONS` for progress streaming back to the browser during long OCR jobs; `init_pipeline()` runs via `@app.before_request`. Frontend is `web/static/js/app.js` (live autocorrect + diff viewer) and `web/templates/index.html`.
 
+**Engine selection.** Both the live editor and the document pipeline carry a Correction
+Engine dropdown; the choice rides along as `engine` on `/api/correct-text` (JSON),
+`/api/process-stream` (query param) and `/api/process-document` (form field).
+`/api/system-status` returns `engines` from `engine_status()`, and the frontend disables
+options the backend can't run — so a machine without torch shows the LM engines greyed out
+with the reason rather than failing after an upload. `requested_engine()` falls back to
+`rule` for an *unknown* name (a stale browser tab shouldn't kill a long OCR job) but 503s
+for a known-but-unavailable one, since silently correcting with a different engine than the
+user picked would misreport what produced the text. Results report the engine the server
+actually used, read from the response rather than the dropdown.
+
+Two things the UI has to account for with an LM engine: the first request pays a ~20 s model
+load (the hint text says so, and clears once warm — measured 7.4 s cold, 0.10 s warm for a
+sentence), and the live editor's keystroke debounce stretches from 300 ms to 1200 ms, since
+a forward pass per uncertain word can't keep up with typing. `sarvam_lm` also holds an
+`_infer_lock` around forward passes: Flask runs threaded, and one CUDA model must not be
+entered concurrently.
+
 ### OCR defaults and why
 
 | Setting | Default | Rationale |

@@ -9,6 +9,74 @@ document.addEventListener('DOMContentLoaded', () => {
     initSystemStatus();
 });
 
+/* ── Correction Engine Helpers ── */
+
+// What each engine costs and risks, shown next to the selector so the choice
+// is informed rather than a bare dropdown. Numbers are from
+// tools/sarvam_bench.py over 100 synthetic-noise lines with sarvam-1.
+const ENGINE_NOTES = {
+    'rule': 'Dictionary + morphology + n-gram. No model to load.',
+    'hybrid': 'Rule engine proposes, Sarvam-1 vetoes. Fewest wrong corrections (6 vs 20 per 100 lines).',
+    'sarvam-rerank': 'Sarvam-1 ranks the rule engine\'s candidates. Cannot invent words.',
+    'sarvam-generate': 'Sarvam-1 rewrites whole lines. Can hallucinate — not recommended for corpus text.'
+};
+
+const LM_FIRST_CALL_NOTE = ' First run loads the model (~20s).';
+
+// Engines that are known but not installed on this backend; filled in from
+// /api/system-status so a missing torch install disables the option with a
+// reason instead of failing at request time.
+let ENGINE_AVAILABILITY = {};
+
+function setHint(el, text, kind) {
+    if (!el) return;
+    el.textContent = text || '';
+    el.className = 'engine-hint' + (kind ? ' ' + kind : '');
+}
+
+function updateEngineHint(selectEl, hintEl, opts) {
+    if (!selectEl || !hintEl) return;
+    const engine = selectEl.value;
+    const status = ENGINE_AVAILABILITY[engine];
+    const options = opts || {};
+
+    if (status && !status.available) {
+        setHint(hintEl, status.reason, 'error');
+        return;
+    }
+
+    let note = ENGINE_NOTES[engine] || '';
+    let kind = '';
+    if (engine !== 'rule') {
+        if (!options.warmed) note += LM_FIRST_CALL_NOTE;
+        if (options.perPage) note += ' Adds a scoring pass per uncertain word, per page.';
+        kind = 'warn';
+    }
+    setHint(hintEl, note, kind);
+}
+
+// Disables options the backend cannot run, so the UI never offers an engine
+// that would 503 on use.
+function applyEngineAvailability(engines) {
+    ENGINE_AVAILABILITY = engines || {};
+    ['liveEngineSelect', 'docEngineSelect'].forEach((id) => {
+        const sel = document.getElementById(id);
+        if (!sel) return;
+        Array.from(sel.options).forEach((opt) => {
+            const status = ENGINE_AVAILABILITY[opt.value];
+            const ok = !status || status.available;
+            opt.disabled = !ok;
+            opt.textContent = opt.textContent.replace(/ \(unavailable\)$/, '');
+            if (!ok) opt.textContent += ' (unavailable)';
+        });
+        if (sel.selectedOptions[0] && sel.selectedOptions[0].disabled) sel.value = 'rule';
+    });
+    updateEngineHint(document.getElementById('liveEngineSelect'),
+                     document.getElementById('liveEngineHint'), { warmed: false });
+    updateEngineHint(document.getElementById('docEngineSelect'),
+                     document.getElementById('docEngineHint'), { warmed: false, perPage: true });
+}
+
 /* ── Top-Level Shared Utilities ── */
 
 function escapeHtml(str) {
@@ -120,9 +188,33 @@ function initLiveAutocorrect() {
     const tableBody = document.getElementById('liveCorrectionsTableBody');
     const copyBtn = document.getElementById('liveCopyBtn');
     const clearBtn = document.getElementById('liveClearBtn');
+    const engineSelect = document.getElementById('liveEngineSelect');
+    const engineHint = document.getElementById('liveEngineHint');
 
     let debounceTimer = null;
     let latestCorrectedText = '';
+
+    // The rule engine answers in ~20ms, so re-correcting on every keystroke is
+    // free. An LM engine costs a forward pass per uncertain word (and a ~20s
+    // model load on the very first call), so typing at 300ms would queue
+    // requests faster than they complete. Back off instead of firing.
+    const DEBOUNCE_MS = { 'rule': 300 };
+    const LM_DEBOUNCE_MS = 1200;
+
+    function currentEngine() {
+        return engineSelect ? engineSelect.value : 'rule';
+    }
+
+    function debounceFor(engine) {
+        return DEBOUNCE_MS[engine] || LM_DEBOUNCE_MS;
+    }
+
+    if (engineSelect) {
+        engineSelect.addEventListener('change', () => {
+            updateEngineHint(engineSelect, engineHint, { warmed: false });
+            if ((rawInput.value || '').trim()) triggerCorrection();
+        });
+    }
 
     const sampleText = "ಶಿಕ್ಷಣವು ಪ್ರತಿಯೊಬ್ಬ ವ್ಯಕ್ತಿಯ ಜಿವನದಲ್ಲಿ ಪ್ರಮುಖ ಪಾತ್ರ ವಹಿಸುತದೆ. ಇದು ಸಮಾಜದ ಶಿಕಷಣ ಅಭಿವೃದ್ಧಿಗೆ ಕಾರಣವಾಗುತದೆ.";
 
@@ -139,7 +231,7 @@ function initLiveAutocorrect() {
     if (rawInput) {
         rawInput.addEventListener('input', () => {
             clearTimeout(debounceTimer);
-            debounceTimer = setTimeout(triggerCorrection, 300);
+            debounceTimer = setTimeout(triggerCorrection, debounceFor(currentEngine()));
         });
     }
 
@@ -156,19 +248,30 @@ function initLiveAutocorrect() {
             return;
         }
 
+        const engine = currentEngine();
+        if (engine !== 'rule') {
+            setHint(engineHint, ENGINE_NOTES[engine] + ' Working…', 'warn');
+        }
+
         try {
             const resp = await fetch('/api/correct-text', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text })
+                body: JSON.stringify({ text, engine })
             });
             const data = await resp.json();
 
             if (resp.ok) {
                 renderLiveResults(data);
+                // The model is resident after the first call, so stop warning
+                // about the load cost.
+                updateEngineHint(engineSelect, engineHint, { warmed: engine !== 'rule' });
+            } else {
+                setHint(engineHint, data.error || 'Correction failed.', 'error');
             }
         } catch (err) {
             console.error("Autocorrect error:", err);
+            setHint(engineHint, 'Could not reach the correction service.', 'error');
         }
     }
 
@@ -230,6 +333,13 @@ function initDocumentUpload() {
 
     const langSelect = document.getElementById('docLangSelect') || document.getElementById('ocrLangSelect');
     const dpiSelect = document.getElementById('docDpiSelect') || document.getElementById('dpiSelect');
+    const engineSelect = document.getElementById('docEngineSelect');
+    const engineHint = document.getElementById('docEngineHint');
+
+    if (engineSelect) {
+        engineSelect.addEventListener('change', () =>
+            updateEngineHint(engineSelect, engineHint, { warmed: false, perPage: true }));
+    }
     const processBtn = document.getElementById('docProcessBtn') || document.getElementById('btnProcessDoc');
     
     const progressCard = document.getElementById('docProgressCard');
@@ -245,6 +355,7 @@ function initDocumentUpload() {
     const docStatPages = document.getElementById('docStatPages');
     const docStatFixes = document.getElementById('docStatFixes');
     const docStatTime = document.getElementById('docStatTime');
+    const docStatEngine = document.getElementById('docStatEngine');
 
     const btnCopyDocText = document.getElementById('btnCopyDocText');
     const btnDownloadPdf = document.getElementById('btnDownloadPdf');
@@ -474,7 +585,11 @@ function initDocumentUpload() {
         }
 
         let streamReceivedAny = false;
-        activeEventSource = new EventSource(`/api/process-stream/${sessionId}?lang=${encodeURIComponent(lang)}&dpi=${encodeURIComponent(dpi)}`);
+        const engine = engineSelect ? engineSelect.value : 'rule';
+        activeEventSource = new EventSource(
+            `/api/process-stream/${sessionId}?lang=${encodeURIComponent(lang)}` +
+            `&dpi=${encodeURIComponent(dpi)}&engine=${encodeURIComponent(engine)}`
+        );
 
         activeEventSource.onmessage = (e) => {
             streamReceivedAny = true;
@@ -564,6 +679,13 @@ function initDocumentUpload() {
         if (docStatPages) docStatPages.textContent = data.total_pages ?? (data.result ? data.result.total_pages : 0);
         if (docStatFixes) docStatFixes.textContent = data.total_corrections ?? (data.result ? data.result.total_corrections : 0);
         if (docStatTime) docStatTime.textContent = `${data.latency_seconds || 0}s`;
+        // Which engine actually produced this text -- reported by the server,
+        // not read back off the dropdown, so the record stays true if the
+        // request fell back.
+        if (docStatEngine) {
+            docStatEngine.textContent =
+                data.engine || (data.result && data.result.correction_engine) || 'rule';
+        }
 
         if (docRawDisplay) docRawDisplay.textContent = data.raw_text || '(No text extracted)';
 
@@ -606,6 +728,8 @@ async function initSystemStatus() {
     try {
         const resp = await fetch('/api/system-status');
         const data = await resp.json();
+
+        applyEngineAvailability(data.engines);
 
         const badge = document.getElementById('headerStatusBadge');
         if (badge) {

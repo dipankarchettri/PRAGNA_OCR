@@ -31,7 +31,7 @@ from pipeline.ocr import (
     DEFAULT_OEM,
     SUPPORTED_LANGUAGES
 )
-from pipeline.correction import get_dictionary, get_word_list
+from pipeline.correction import get_dictionary, get_word_list, ENGINES, ENGINE_RULE, engine_status
 from pipeline.ingestion import SUPPORTED_IMAGE_EXTENSIONS, inspect_pdf, is_pdf_file
 
 app = Flask(__name__)
@@ -65,18 +65,38 @@ def index():
     return render_template('index.html')
 
 
+def requested_engine(value) -> str:
+    """
+    Validate a client-supplied engine name, falling back to the rule engine.
+
+    Unknown names fall back rather than 400 so a stale browser tab can't break
+    a long OCR job over a dropdown value; an engine that is *known but
+    unavailable* still raises, because silently correcting with a different
+    engine than the user picked would misreport what produced the text.
+    """
+    engine = (value or ENGINE_RULE).strip()
+    if engine not in ENGINES:
+        return ENGINE_RULE
+    status = engine_status()[engine]
+    if not status['available']:
+        raise RuntimeError(f"The '{engine}' engine is unavailable. {status['reason']}")
+    return engine
+
+
 @app.route('/api/system-status', methods=['GET'])
 def system_status():
-    """Return backend status, installed OCR engines, and dictionary stats."""
+    """Return backend status, installed OCR engines, dictionary stats, and engines."""
     tess_installed = is_tesseract_available()
     avail_langs = get_available_languages() if tess_installed else []
-    
+
     return jsonify({
         'tesseract_available': tess_installed,
         'installed_languages': avail_langs,
         'supported_languages': SUPPORTED_LANGUAGES,
         'dictionary_words_count': len(get_word_list()),
-        'max_upload_size_mb': 250
+        'max_upload_size_mb': 250,
+        'engines': engine_status(),
+        'default_engine': ENGINE_RULE
     })
 
 
@@ -88,7 +108,13 @@ def api_correct_text():
     if not text:
         return jsonify({'error': 'No text provided.'}), 400
 
-    result = process_text_input(text)
+    try:
+        engine = requested_engine(data.get('engine'))
+        result = process_text_input(text, engine=engine)
+    except RuntimeError as e:
+        return jsonify({'error': str(e)}), 503
+    except Exception as e:
+        return jsonify({'error': f'Correction failed: {e}'}), 500
     return jsonify(result)
 
 
@@ -166,6 +192,10 @@ def api_process_stream(session_id: str):
     psm = int(request.args.get('psm', DEFAULT_PSM))
     oem = int(request.args.get('oem', DEFAULT_OEM))
     save_images = request.args.get('save_images', 'false').lower() == 'true'
+    try:
+        engine = requested_engine(request.args.get('engine'))
+    except RuntimeError as e:
+        return jsonify({'error': str(e)}), 503
 
     upload_path = session_data['upload_path']
     output_dir = os.path.join(PROCESSED_FOLDER, session_id)
@@ -184,6 +214,7 @@ def api_process_stream(session_id: str):
                 dpi=dpi,
                 psm=psm,
                 oem=oem,
+                engine=engine,
                 output_dir=output_dir,
                 save_pdf=True,
                 save_images=save_images,
@@ -202,6 +233,7 @@ def api_process_stream(session_id: str):
                     'total_pages': res['total_pages'],
                     'total_corrections': res['total_corrections'],
                     'latency_seconds': res['latency_seconds'],
+                    'engine': engine,
                     'download_urls': {
                         'pdf': f'/api/download/{session_id}/pdf',
                         'txt': f'/api/download/{session_id}/txt',
@@ -254,6 +286,10 @@ def api_process_document():
     psm = int(request.form.get('psm', DEFAULT_PSM))
     oem = int(request.form.get('oem', DEFAULT_OEM))
     save_images = request.form.get('save_images', 'false').lower() == 'true'
+    try:
+        engine = requested_engine(request.form.get('engine'))
+    except RuntimeError as e:
+        return jsonify({'error': str(e)}), 503
 
     session_id = uuid.uuid4().hex
     safe_name = safe_upload_filename(file.filename)
@@ -270,6 +306,7 @@ def api_process_document():
             dpi=dpi,
             psm=psm,
             oem=oem,
+            engine=engine,
             output_dir=output_dir,
             save_pdf=True,
             save_images=save_images
@@ -285,6 +322,7 @@ def api_process_document():
             'total_pages': result['total_pages'],
             'total_corrections': result['total_corrections'],
             'latency_seconds': result['latency_seconds'],
+            'engine': engine,
             'download_urls': {
                 'pdf': f'/api/download/{session_id}/pdf',
                 'txt': f'/api/download/{session_id}/txt',
