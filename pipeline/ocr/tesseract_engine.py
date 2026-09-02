@@ -72,13 +72,32 @@ def get_available_languages() -> List[str]:
     return sorted(list(langs)) if langs else ['kan', 'eng']
 
 
-# Page segmentation mode. PSM 3 (fully automatic) was the previous default. Measured
-# on single-column Kannada book pages via tools/ocr_bench.py, PSM 6 ("assume a single
-# uniform block of text") scores meaningfully better on both vocabulary validity and
-# mean confidence; PSM 3 and 4 came out identical to each other and behind it.
-# Pass psm=3 explicitly for pages with genuinely mixed layout -- title pages, tables of
-# contents, multi-column matter -- where automatic segmentation earns its keep.
-DEFAULT_PSM = 6
+# Page segmentation mode. PSM 3 is "fully automatic"; PSM 6 is "assume a single uniform
+# block of text".
+#
+# This was 6, chosen before there was any ground truth, by ranking pages on *proxy*
+# metrics -- corrector vocabulary-validity ratio and Tesseract's own mean confidence.
+# Re-measured against real transcripts, that ranking inverts. Raw OCR CER on the nine
+# real page/transcript pairs in tests/fixtures/real/:
+#
+#   page    psm 3    psm 4    psm 6        page    psm 3    psm 4    psm 6
+#   01     0.0293   0.0293   0.0293        06     0.1063   0.1063   0.0864
+#   02     0.0294   0.0352   0.0308        07     0.0787   0.0787   0.0788
+#   03     0.0545   0.0545   0.0546        08     0.0145   0.0178   0.0362
+#   04     0.0951   0.0951   0.1035        09     0.0252   0.0252   0.0286
+#   05     0.0612   0.0612   0.0782        mean   0.0549   0.0559   0.0585
+#
+# PSM 3 wins or ties on 8 of 9 (06 is the lone holdout). Through the full corrector the
+# gap widens rather than washing out -- CER 0.0532 vs 0.0572, WER 0.2782 vs 0.2869, and
+# `broke` 0 vs 1 (precision 1.000 vs 0.917): better segmentation hands the corrector
+# fewer merged and split lines to trip over.
+#
+# PSM 6 keeps a 0.0006 CER edge on the 24 typeset pages from tools/build_eval_set.py.
+# That set is a synthetic regression gate, not evidence about scans, and the real-page
+# gain is ten times larger -- so the real pages decide it. Note *why* the proxy metrics
+# misled: both reward confident, dictionary-shaped output, and PSM 6 forcing one uniform
+# block produces exactly that on a page it is segmenting wrongly.
+DEFAULT_PSM = 3
 
 # OCR engine mode. OEM 1 is LSTM-only. The legacy engine has no Kannada support worth
 # using, and the tessdata_best models are LSTM-only anyway, so asking for OEM 3

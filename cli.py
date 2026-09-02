@@ -176,7 +176,7 @@ Kannada page lets Tesseract emit Latin for ambiguous glyphs.
     parser.add_argument('--batch', '-b', help='Directory of PDFs/images to process in batch mode')
     parser.add_argument('--lang', '-l', default='kan', help='Tesseract OCR language code(s) (default: kan)')
     parser.add_argument('--dpi', '-d', type=int, default=400, help='DPI for PDF page rasterization (default: 400)')
-    parser.add_argument('--psm', type=int, default=DEFAULT_PSM, help=f'Tesseract page segmentation mode (default: {DEFAULT_PSM}; use 3 for mixed/multi-column layouts)')
+    parser.add_argument('--psm', type=int, default=DEFAULT_PSM, help=f'Tesseract page segmentation mode (default: {DEFAULT_PSM} = automatic; try 6 on a page that is one uniform text block)')
     parser.add_argument('--oem', type=int, default=DEFAULT_OEM, help=f'Tesseract OCR engine mode (default: {DEFAULT_OEM} = LSTM only)')
     parser.add_argument('--min-confidence', type=int, default=0, help='Drop OCR words below this confidence (0-100, default: 0 = keep all)')
     parser.add_argument('--no-adaptive-contrast', action='store_true', help='Skip the extra contrast-boosted OCR pass (faster, but misses gains on faded scans)')

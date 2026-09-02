@@ -47,6 +47,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from pipeline import init_pipeline
 from pipeline.correction import correct_layout_lines
 from pipeline.correction.edit_distance import GLYPH_CONFUSIONS
+from pipeline.ocr.tesseract_engine import DEFAULT_OEM, DEFAULT_PSM
 from tools.ocr_bench import char_error_rate, word_error_rate
 
 KANNADA_RE = re.compile(r'[ಀ-೥]')
@@ -402,8 +403,10 @@ def main():
                     help='per-character corruption rate for --synthetic (default: 0.02)')
     ap.add_argument('--seed', type=int, default=20260901)
     ap.add_argument('--lang', default='kan')
-    ap.add_argument('--psm', type=int, default=6)
-    ap.add_argument('--oem', type=int, default=1)
+    # Track the production defaults rather than hardcoding, so the bench never
+    # silently measures a configuration the pipeline does not actually run.
+    ap.add_argument('--psm', type=int, default=DEFAULT_PSM)
+    ap.add_argument('--oem', type=int, default=DEFAULT_OEM)
     ap.add_argument('--verbose', '-v', action='store_true', help='per-page breakdown')
     ap.add_argument('--json-out', metavar='PATH', help='also write the full result as JSON')
     args = ap.parse_args()

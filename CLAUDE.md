@@ -158,7 +158,7 @@ stalling on the ~33 s model load. `/api/system-status` exposes `warmup`
 | Setting | Default | Rationale |
 |---|---|---|
 | `--lang` | `kan` | Adding `eng` on a monolingual Kannada page makes Tesseract emit Latin glyphs for ambiguous shapes; the corrector skips non-Kannada tokens, so that output is unrecoverable. |
-| `--psm` | `6` | Best measured on single-column book pages; use `3` for mixed/multi-column layouts. |
+| `--psm` | `3` | Automatic segmentation. Wins or ties on 8 of 9 real pages (mean raw CER 0.0549 vs 0.0585 for psm 6) and improves the corrected result too — CER 0.0532 vs 0.0572, `broke` 0 vs 1. Was `6` until real transcripts existed; that choice came from proxy metrics (vocabulary-validity ratio, mean confidence) which both reward the confident dictionary-shaped output psm 6 produces *while segmenting a page wrongly*. Try `6` on a page that genuinely is one uniform block. |
 | `--oem` | `1` | LSTM only — the bundled `tessdata_best` models ship no legacy engine. |
 | `--dpi` | `400` | Subscript conjuncts alias badly at 300. |
 
