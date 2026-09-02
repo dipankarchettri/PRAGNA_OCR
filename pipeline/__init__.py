@@ -22,7 +22,7 @@ from .ocr import (
 )
 from .correction import (
     load_dictionary, train_from_word_list, load_ngram_model, add_vocabulary,
-    get_word_list, correct_text, correct_layout_lines
+    get_word_list, correct_text, correct_layout_lines, clear_correction_caches
 )
 from .exporter import (
     generate_pdf_from_text,
@@ -107,6 +107,10 @@ def init_pipeline(dic_path: Optional[str] = None):
             add_vocabulary(get_word_list())
         else:
             train_from_word_list(get_word_list())
+
+        # The corrector memoizes candidate generation against whatever
+        # vocabulary is loaded; drop anything cached under a previous one.
+        clear_correction_caches()
 
         _INITIALIZED = True
 

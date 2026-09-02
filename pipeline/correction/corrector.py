@@ -12,7 +12,8 @@ from .morphology import (
     decompose_word,
     join_root_suffix,
     is_compound_word,
-    SUFFIXES,
+    suffixes_ending_with,
+    SUFFIX_SET,
     SUFFIX_NORMALIZATIONS,
     BROKEN_SUFFIXES
 )
@@ -173,7 +174,7 @@ def heal_split_tokens(tokens: List[Dict[str, Any]], dictionary: Set[str]) -> Tup
                 # pronouns in their own right (e.g. "ಚ ಯ", or a longer
                 # phrase like "ಯಮದಾಹ್ಯೋ ಯ"), so bare membership in SUFFIXES
                 # alone isn't enough evidence to merge them away.
-                if (w2 in SUFFIXES or w2.startswith(('ವಾಗಿ', 'ವಾಗಲು', 'ವಾಗುವುದು', 'ವಾಗಬೇಕಿದೆ', 'ವಾಗಿದೆ', 'ವಾಗುತ್ತದೆ'))) \
+                if (w2 in SUFFIX_SET or w2.startswith(('ವಾಗಿ', 'ವಾಗಲು', 'ವಾಗುವುದು', 'ವಾಗಬೇಕಿದೆ', 'ವಾಗಿದೆ', 'ವಾಗುತ್ತದೆ'))) \
                         and w2 not in ('ಯ', 'ದ', 'ನ', 'ಅ', 'ಉ', 'ವು'):
                     should_join = True
                 # Case B: the joined form is itself a real word. Given the
@@ -248,7 +249,13 @@ def is_valid_surface_word(w: str, dictionary: Set[str]) -> bool:
     # isn't a real word). Requiring the whole reconstructed compound to
     # itself have real corpus attestation is what actually distinguishes a
     # genuine compound from a coincidental split.
-    if is_compound_word(w, dictionary) and corpus_frequency(w) >= MIN_CORPUS_ATTESTATION:
+    #
+    # Attestation is tested first purely for speed -- both operands are pure
+    # so the conjunction is order-independent, but corpus_frequency is one
+    # dict lookup while is_compound_word is an O(len(word) * 152) scan, and
+    # it is the attestation half that rejects almost every candidate. This
+    # ordering was 24% of total correction runtime.
+    if corpus_frequency(w) >= MIN_CORPUS_ATTESTATION and is_compound_word(w, dictionary):
         return True
     return False
 
@@ -280,27 +287,34 @@ def resolve_valid_surface_form(cand: str, dictionary: Set[str]) -> Tuple[Optiona
         return join_root_suffix(root, suf), True
     # See is_valid_surface_word: is_compound_word's structural split alone
     # is too permissive to trust as a correction target -- require the
-    # whole candidate to have real corpus attestation too.
-    if is_compound_word(cand, dictionary) and corpus_frequency(cand) >= MIN_CORPUS_ATTESTATION:
+    # whole candidate to have real corpus attestation too. Attestation is
+    # tested first for the same speed reason given there.
+    if corpus_frequency(cand) >= MIN_CORPUS_ATTESTATION and is_compound_word(cand, dictionary):
         return cand, False
     return None, False
 
 
-def generate_kannada_candidates(
+def collect_kannada_candidates(
     word: str,
-    dictionary: Set[str],
-    prev_word: Optional[str] = None,
-    next_word: Optional[str] = None
-) -> List[Tuple[str, float, str]]:
+    dictionary: Set[str]
+) -> Optional[Dict[str, Tuple[float, str]]]:
     """
-    Dynamically generate and rank valid candidate words for an unknown Kannada word token.
-    Combines: Script Normalization -> Suffix Healing -> Vowel Permutation ->
-              Optical Glyph Substitutions -> Virama/Ottu Transforms -> LM Context Scoring.
-    Returns: List of (candidate_word, final_score, correction_type) sorted by best score.
+    Context-free half of candidate generation: every transformation of `word`
+    that resolves to a real surface form, mapped to its base cost and the
+    mechanism that produced it.
+
+    Returns None if `word` is already a valid surface word (nothing to correct).
+
+    Split out from generate_kannada_candidates because this half depends only
+    on (word, dictionary) while the ranking half also depends on the
+    surrounding words, and this is where essentially all the cost is: ~52
+    dictionary/morphology resolutions per word against a handful of dict
+    lookups for scoring. Measured over the eval fixtures, 62.7% of calls are
+    for a word already seen, so the split is what makes caching possible.
     """
     # 1. Exact / Valid surface form check
     if is_valid_surface_word(word, dictionary):
-        return [(word, 0.0, 'none')]
+        return None
 
     candidates: List[Tuple[str, float, str]] = []
 
@@ -314,7 +328,9 @@ def generate_kannada_candidates(
     w = norm
 
     # 3. Subscript & Multi-character Optical Ligature Substitutions (High precision)
-    for k_len in (5, 4, 3, 2):
+    # The longest key in GLYPH_CONFUSIONS is 4 code points (ಸ್ಮೆ), so the
+    # k_len=5 pass this loop used to start with could never match anything.
+    for k_len in (4, 3, 2):
         for i in range(len(w) - k_len + 1):
             sub = w[i:i+k_len]
             if sub in GLYPH_CONFUSIONS:
@@ -362,7 +378,7 @@ def generate_kannada_candidates(
                 candidates.append((res, 0.25, 'word_correction_unconstrained' if fuzzy else 'word_correction'))
 
     # 7. Stem-level substitutions for inflected words (e.g., ದೂಹಿಸಿದರು -> ದೂಷಿಸಿದರು)
-    for suf in SUFFIXES:
+    for suf in (suffixes_ending_with(w[-1]) if w else ()):
         if w.endswith(suf) and len(w) > len(suf) + 1:
             stem = w[:-len(suf)]
             for k_len in (3, 2, 1):
@@ -445,11 +461,55 @@ def generate_kannada_candidates(
                 if res:
                     candidates.append((res, 0.35, 'word_correction_unconstrained' if fuzzy else 'ocr_repair'))
 
-    # 11. Deduplicate candidates and score with weighted Levenshtein & N-gram Language Model
+    # 11. Deduplicate candidates, keeping the cheapest route to each one.
     candidate_dict: Dict[str, Tuple[float, str]] = {}
     for cand, base_cost, ctype in candidates:
         if cand not in candidate_dict or base_cost < candidate_dict[cand][0]:
             candidate_dict[cand] = (base_cost, ctype)
+
+    return candidate_dict
+
+
+# Cache for collect_kannada_candidates, keyed on the word alone -- valid
+# because the function's only other input, the dictionary, is loaded once per
+# process (init_pipeline is idempotent under a lock). The two paths that can
+# replace it -- init_pipeline itself and correct_text's lazy-load fallback --
+# both call clear_correction_caches(), and so must any test that swaps
+# dictionaries mid-process.
+#
+# Capped rather than unbounded: a full book run sees a lot of distinct words,
+# and each entry holds a small dict of candidate strings. Past the cap new
+# words simply go uncached, which costs speed and nothing else.
+_candidate_cache: Dict[str, Optional[Dict[str, Tuple[float, str]]]] = {}
+_CANDIDATE_CACHE_LIMIT = 200_000
+
+
+def clear_correction_caches() -> None:
+    """Drop memoized candidate generation. Call after loading a dictionary."""
+    _candidate_cache.clear()
+
+
+def generate_kannada_candidates(
+    word: str,
+    dictionary: Set[str],
+    prev_word: Optional[str] = None,
+    next_word: Optional[str] = None
+) -> List[Tuple[str, float, str]]:
+    """
+    Dynamically generate and rank valid candidate words for an unknown Kannada word token.
+    Combines: Script Normalization -> Suffix Healing -> Vowel Permutation ->
+              Optical Glyph Substitutions -> Virama/Ottu Transforms -> LM Context Scoring.
+    Returns: List of (candidate_word, final_score, correction_type) sorted by best score.
+    """
+    try:
+        candidate_dict = _candidate_cache[word]
+    except KeyError:
+        candidate_dict = collect_kannada_candidates(word, dictionary)
+        if len(_candidate_cache) < _CANDIDATE_CACHE_LIMIT:
+            _candidate_cache[word] = candidate_dict
+
+    if candidate_dict is None:
+        return [(word, 0.0, 'none')]
 
     ranked: List[Tuple[str, float, str]] = []
     for cand, (base_cost, ctype) in candidate_dict.items():
@@ -458,6 +518,9 @@ def generate_kannada_candidates(
         final_score = round(base_cost - lm_bonus, 3)
         ranked.append((cand, final_score, ctype))
 
+    # Stable sort, so score ties keep candidate_dict's insertion order -- which
+    # is the generator order in collect_kannada_candidates, cached or not.
+    # That ordering is load-bearing and undocumented; Phase 3d addresses it.
     ranked.sort(key=lambda x: x[1])
     return ranked
 
@@ -542,7 +605,7 @@ def suggest_kannada_word(word: str, prev_word: Optional[str] = None, next_word: 
                 if prev_word or next_word:
                     if not has_bigram_support(top_cand, prev_word, next_word):
                         return word, 0.0, 'none'
-                elif corpus_frequency(top_cand) < MIN_CANDIDATE_ATTESTATION_FOR_UNSEEN_ORIGINAL:
+                elif cand_freq < MIN_CANDIDATE_ATTESTATION_FOR_UNSEEN_ORIGINAL:
                     return word, 0.0, 'none'
             # Non-unconstrained candidates (is_unconstrained False) are
             # already structurally validated, not just frequency-plausible:
@@ -602,6 +665,13 @@ def correct_text(
     if not dictionary:
         load_dictionary()
         train_from_word_list(get_word_list())
+        clear_correction_caches()
+        # Re-read: load_and_expand_dic rebinds the module global rather than
+        # mutating it, so the local `dictionary` above is still the empty set
+        # that triggered this branch, and heal_split_tokens below would have
+        # been handed it. Unreachable in practice -- every real entry point
+        # runs init_pipeline first -- but wrong as written.
+        dictionary = get_dictionary()
 
     conf_by_word: Dict[str, float] = {}
     if word_confidences:

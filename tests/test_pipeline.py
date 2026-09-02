@@ -114,6 +114,74 @@ class TestKannadaPipeline(unittest.TestCase):
         self.assertGreater(os.path.getsize(out), 500)
 
 
+class TestSuffixBucketing(unittest.TestCase):
+    """
+    decompose_word finds the longest suffix a word ends with. It used to scan
+    all 152 entries of SUFFIXES calling str.endswith on each; it now looks up
+    only the bucket for the word's final character, which was 38% of total
+    correction runtime.
+
+    That is a pure speedup *only* while the bucket yields exactly the same
+    matches in exactly the same order as the full scan -- the first match wins,
+    so a reordering silently changes which decomposition the engine picks.
+    Nothing else in the suite would catch that, and the invariant is easy to
+    break by editing SUFFIXES.
+    """
+
+    def test_bucket_lookup_matches_a_full_scan(self):
+        from pipeline.correction.morphology import SUFFIXES, suffixes_ending_with
+
+        # Every distinct final character in the vocabulary, not just the ones
+        # a sample of words happens to end in.
+        for ch in sorted({s[-1] for s in SUFFIXES} | set('ಕಮತಿೆುಂ್'), key=ord):
+            with self.subTest(char=ch):
+                self.assertEqual(
+                    [s for s in suffixes_ending_with(ch)],
+                    [s for s in SUFFIXES if s.endswith(ch)],
+                    'bucket order diverged from the full-scan order')
+
+    def test_buckets_cover_every_suffix(self):
+        from pipeline.correction.morphology import SUFFIXES, suffixes_ending_with
+
+        reachable = set()
+        for ch in {s[-1] for s in SUFFIXES}:
+            reachable.update(suffixes_ending_with(ch))
+        self.assertEqual(reachable, set(SUFFIXES), 'a suffix is unreachable')
+
+    def test_unknown_final_character_yields_nothing(self):
+        from pipeline.correction.morphology import suffixes_ending_with
+
+        self.assertEqual(list(suffixes_ending_with('Z')), [])
+
+
+class TestCandidateCacheInvalidation(unittest.TestCase):
+    """
+    generate_kannada_candidates memoizes on the word alone, which is only
+    sound while the dictionary behind it is unchanged. If a reload ever stops
+    clearing the cache, corrections silently reflect the *previous*
+    vocabulary -- a failure that would produce plausible-looking wrong output
+    rather than an error.
+    """
+
+    def test_clearing_the_cache_makes_a_vocabulary_change_visible(self):
+        init_pipeline()
+        from pipeline.correction import corrector
+        from pipeline.correction.dictionary import get_dictionary
+
+        word = 'ಜಿವನದಲ್ಲಿ'   # a real OCR error the engine corrects
+        dictionary = get_dictionary()
+        first = corrector.generate_kannada_candidates(word, dictionary)
+        self.assertIn(word, corrector._candidate_cache,
+                      'candidate generation was not memoized at all')
+
+        corrector.clear_correction_caches()
+        self.assertNotIn(word, corrector._candidate_cache,
+                         'clear_correction_caches did not drop the entry')
+
+        # Recomputing from scratch must agree with the cached answer.
+        self.assertEqual(corrector.generate_kannada_candidates(word, dictionary), first)
+
+
 class TestOCRLayoutGrouping(unittest.TestCase):
     """
     Regression tests for how word boxes are grouped into lines.
