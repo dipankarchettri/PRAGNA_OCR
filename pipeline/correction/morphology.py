@@ -5,6 +5,21 @@ Handles agglutinative Kannada suffix stripping, stem analysis, and Sandhi rules.
 
 from typing import Set, Tuple, Optional, Dict
 
+from .graphemes import aksharas
+
+# Smallest either half of a two-way compound split may be, in aksharas.
+#
+# Without this, a "compound" can be a real word glued to a bound morpheme, and
+# on a 622k-form dictionary that happens constantly by coincidence. Measured on
+# a real page: the OCR error ನಿಪಾಸೆ (for ಪಿಪಾಸೆ) was "corrected" to ನಿವಾಸೆ,
+# which is not a word and is not in the dictionary -- it passed validation only
+# because it splits as ನಿ + ವಾಸೆ, and ನಿ is a one-akshara particle that is
+# listed. Requiring both halves to be two aksharas rejects that split while
+# leaving every real compound intact: measured across 9 real pages, 24 typeset
+# pages and 300 synthetic lines, this removes the junk correction and changes
+# no other cell in the table.
+MIN_COMPOUND_PART_AKSHARAS = 2
+
 # Dependent vowel signs (matras) -- a root ending in one of these is
 # vowel-final, which changes which suffixes can attach directly (see
 # decompose_word's oblique-case-suffix guard below).
@@ -308,6 +323,11 @@ def is_compound_word(word: str, dictionary: Set[str]) -> bool:
         part2 = word[i:]
 
         if part1 in SUFFIX_SET or part2 in SUFFIX_SET:
+            continue
+
+        # A compound is two words, not a word and a fragment.
+        if (len(aksharas(part1)) < MIN_COMPOUND_PART_AKSHARAS
+                or len(aksharas(part2)) < MIN_COMPOUND_PART_AKSHARAS):
             continue
 
         if part1 in dictionary and part2 in dictionary:

@@ -142,6 +142,38 @@ class TestSpaceHealingPrecision(PrecisionTestBase):
                 self.assertEqual(healed, expected)
 
 
+class TestCompoundValidation(PrecisionTestBase):
+    """
+    is_compound_word accepts a word if it splits into two dictionary words. That
+    test gets weaker as the dictionary grows, because more short pieces are
+    listed -- and it is the LAST line of defence in resolve_valid_surface_form,
+    so anything it waves through becomes a correction target that skips the
+    bigram gate.
+    """
+
+    def test_a_word_glued_to_a_bound_morpheme_is_not_a_compound(self):
+        """
+        Found on tests/fixtures/real/03.png. The OCR error ನಿಪಾಸೆ (for ಪಿಪಾಸೆ)
+        was "corrected" to ನಿವಾಸೆ -- not a word, not in the dictionary, and
+        rejected by both morphology paths. It passed only because it splits as
+        ನಿ + ವಾಸೆ, and ನಿ is a one-akshara particle that happens to be listed.
+        """
+        from pipeline.correction.morphology import is_compound_word
+        from pipeline.correction.corrector import resolve_valid_surface_form
+
+        self.assertFalse(is_compound_word('ನಿವಾಸೆ', self.dictionary))
+        self.assertIsNone(resolve_valid_surface_form('ನಿವಾಸೆ', self.dictionary)[0],
+                          'a non-word was validated as a correction target')
+
+    def test_real_compounds_still_validate(self):
+        """The guard must not disable genuine compound recognition."""
+        from pipeline.correction.morphology import is_compound_word
+
+        for word in ('ಮಹಾಕಾವ್ಯ', 'ರಾಷ್ಟ್ರಗೀತೆ', 'ಜನಪದಗೀತೆ'):
+            with self.subTest(word=word):
+                self.assertTrue(is_compound_word(word, self.dictionary))
+
+
 class TestNonKannadaIsUntouched(PrecisionTestBase):
     """
     The tokenizer's contract: non-Kannada spans are never modified and
