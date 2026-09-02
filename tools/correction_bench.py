@@ -37,6 +37,7 @@ import json
 import os
 import random
 import re
+import string
 import sys
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -192,6 +193,16 @@ def load_synthetic_docs(
 # Change classification
 # ─────────────────────────────────────────────────────────────
 
+# Punctuation an aligned reference word can carry that the OCR token does not,
+# in either script.
+_EDGE_PUNCT = ' \t\r\n' + string.punctuation + '।॥“”‘’…—–‐'
+
+
+def _bare(word: str) -> str:
+    """A word with edge punctuation stripped, for exact comparison."""
+    return word.strip(_EDGE_PUNCT)
+
+
 def _word_spans(text: str) -> List[Tuple[int, int, str]]:
     return [(m.start(), m.end(), m.group()) for m in re.finditer(r'\S+', text)]
 
@@ -239,6 +250,16 @@ def classify_changes(
     not right -- which is neither a win nor a regression, just noise moved
     around.
 
+    Comparison is EQUALITY after stripping edge punctuation, never substring
+    containment. Substring was used originally to tolerate a reference word
+    carrying a period the OCR token lacks, and it silently inverted the metric:
+    any correction that DELETES characters leaves a substring of the original,
+    so a truncation scored as a fix. Measured on a real page, "ಹೊಸದು" -> "ಹೊಸ"
+    against reference "ಹೊಸದು." was counted fixed, when the OCR had been right
+    and the engine broke it. Worse, both branches could match at once and
+    'fixed' was tested first, so those breaks were invisible -- that page
+    reported 2 fixed / 0 broke while its CER went UP.
+
     Alignment is difflib over whitespace-split words, so this is only
     meaningful where the OCR text and reference are broadly parallel; badly
     misaligned pages inflate 'other' rather than the other two counts.
@@ -253,7 +274,7 @@ def classify_changes(
             for k in range(i2 - i1):
                 aligned[i1 + k] = ref_words[j1 + k]
 
-    ref_word_set = set(ref_words)
+    ref_bare_set = {_bare(w) for w in ref_words}
     fixed = broke = other = 0
     used: set = set()
     for corr in corrections:
@@ -265,10 +286,10 @@ def classify_changes(
         # reference has the halves separately, the merge destroyed a real word
         # boundary; if it has the joined form, the merge repaired a split.
         if ' ' in original:
-            halves = original.split()
-            if all(any(h in rw for rw in ref_word_set) for h in halves):
+            halves = [_bare(h) for h in original.split()]
+            if all(h in ref_bare_set for h in halves):
                 broke += 1
-            elif any(replacement in rw for rw in ref_word_set):
+            elif _bare(replacement) in ref_bare_set:
                 fixed += 1
             else:
                 other += 1
@@ -280,11 +301,10 @@ def classify_changes(
             continue
         used.add(idx)
 
-        ref_word = aligned[idx]
-        # The aligned reference word can carry punctuation the token doesn't.
-        if replacement in ref_word:
+        ref_bare = _bare(aligned[idx])
+        if _bare(replacement) == ref_bare:
             fixed += 1
-        elif original in ref_word:
+        elif _bare(original) == ref_bare:
             broke += 1
         else:
             other += 1

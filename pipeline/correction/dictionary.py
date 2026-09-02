@@ -8,7 +8,7 @@ vocabularies. The split is the important thing about this module:
                      A word in here is never flagged as an error. Answers
                      "is this real Kannada?"
   target set      -- the subset that is also attested in real corpus text,
-                     247,556 forms. Answers "may the corrector rewrite some
+                     246,861 forms. Answers "may the corrector rewrite some
                      other word INTO this one?"
 
 The asymmetry is deliberate and the two errors are not symmetric. A real word
@@ -45,38 +45,44 @@ KANNADA_CHARS_RE = re.compile(r'^[ಀ-೿‌‍]+$')
 # membership was 182k and does not transfer. Measured on 24 clean pages, 24
 # degraded pages and 300 synthetic lines:
 #
-#   minfreq   targets    clean(fix/brk)  degr(fix/brk)   synth CER  fix/brk  prec
-#         2   247,556           5 / 0          3 / 0        0.0094  293/121  0.708
-#         5   194,715           5 / 0          3 / 0        0.0096  284/120  0.703
-#        10   163,046           5 / 0          3 / 0        0.0095  280/118  0.704
+#   minfreq   targets   real9(fix/brk)  synth CER  synth fix/brk  precision
+#         2   246,861        11 / 1         0.0091     350 / 40      0.897
+#         5   194,715        11 / 1         0.0096     284 / 120     0.703
+#        10   163,046        11 / 1         0.0095     280 / 118     0.704
 #
-# Tightening buys nothing: the real-page results are identical and every
-# synthetic column is flat-to-worse. This is the opposite of the intuition that
-# a smaller target set buys precision -- it does not, because the
-# bigram-support and frequency-dominance gates in corrector.py already do that
-# filtering, and the frequency floor only subtracts real fixes on top. The same
-# sweep run against a 2.5M membership was monotone in the same direction, so
-# the finding is not an artefact of this particular vocabulary.
+# Tightening buys nothing: real-page results are identical and the synthetic
+# columns are flat-to-worse. This is the opposite of the intuition that a
+# smaller target set buys precision -- it does not, because the bigram-support
+# and frequency-dominance gates in corrector.py already do that filtering, and
+# the frequency floor only subtracts real fixes on top. The same sweep against
+# a 2.5M membership was monotone in the same direction, so the finding is not
+# an artefact of this particular vocabulary.
 #
 # 2 is the meaningful floor rather than 0 or 1 because ngram.add_vocabulary()
 # pads every known dictionary word to a count of exactly 1, so ">= 2" is
 # precisely "attested in real corpus text rather than merely present in the
-# word list". Measured: 0 costs a broken word on both page sets.
+# word list".
 MIN_TARGET_FREQUENCY = 2
 
 # Minimum length, in code points, for a correction target.
 #
-# 2, not 3. The reason this exists at all is that frequency cannot exclude
-# single letters -- ರ alone has a corpus frequency of 1,064,175, from corpus
-# tokenization artifacts rather than real one-letter words, which would make it
-# one of the most attractive targets in the whole vocabulary. A floor of 2
-# already excludes every such single letter.
+# The floor exists because frequency cannot exclude single letters -- ರ alone
+# has a corpus frequency of 1,064,175, from corpus tokenization artifacts
+# rather than real one-letter words, which would otherwise make it one of the
+# most attractive targets in the whole vocabulary.
 #
-# 3 was the previous value and is measurably worse: it costs a genuine fix on
-# BOTH real-OCR page sets (clean 5->4, degraded 3->2) and nine on synthetic
-# (293->284), while preventing no breaks at all. The extra caution was buying
-# nothing.
-MIN_TARGET_LENGTH = 2
+# 3 beats 2 on every set measured, at every VALID_WORD_TRUST_FREQUENCY:
+#
+#   len   real9(fix/brk)   typeset24(fix/brk)   synth fix/brk  synth precision
+#     2       11 / 1            2 / 2             351 / 51         0.873
+#     3       11 / 1            2 / 1             350 / 40         0.897
+#
+# This was briefly set to 2 on the strength of a measurement that turned out to
+# be wrong -- classify_changes compared words by substring containment, so a
+# correction that TRUNCATED a word scored as a fix (ಹೊಸದು -> ಹೊಸ against
+# reference "ಹೊಸದು." counted fixed). Every number that informed the change was
+# inflated. See tools/correction_bench.py.
+MIN_TARGET_LENGTH = 3
 
 _dictionary: Set[str] = set()
 _word_list: List[str] = []

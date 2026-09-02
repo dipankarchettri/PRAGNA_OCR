@@ -56,23 +56,28 @@ MIN_CORPUS_ATTESTATION = 2
 # at 2,442x behind ಕಾಫಿ does not. So this does not weaken protection of rare
 # real words; it hands them to the check designed for them.
 #
-# Swept over all three benches (24 clean pages / 24 degraded / 300 synthetic
-# lines). Breaks stay at ZERO on both real-OCR page sets across the whole
-# range, so this buys recall without paying precision:
+# Swept against 9 real scanned pages, 24 typeset pages and 300 synthetic lines:
 #
-#     VWT     clean(fix/brk)  degr(fix/brk)   synth CER  fix/brk  prec  secs
-#       0          4 / 0          2 / 0          0.0098  237/107  0.689  1.2
-#    1000          4 / 0          2 / 0          0.0093  291/120  0.708  2.1
-#    5000          5 / 0          3 / 0          0.0094  293/121  0.708  2.5
-#   20000          5 / 0          3 / 0          0.0093  295/121  0.709  3.0
-#  100000          5 / 0          3 / 0          0.0093  295/121  0.709  3.5
+#     VWT    real9(fix/brk)  typeset(fix/brk)  synth CER  synth fix/brk  prec
+#        0       11 / 1           2 / 1          0.0096     305 / 23    0.930
+#     1000       11 / 1           2 / 1          0.0091     350 / 40    0.897
+#     5000       11 / 3           2 / 2          0.0092     350 / 41    0.895
 #
-# 5000 takes all of the real-page gain -- 8 genuine fixes across the two page
-# sets against 6 at VWT=0 -- at the cheapest point that reaches it; past here
-# the only movement is two more synthetic fixes for 40% more time. The cost is
-# real: every word below the floor now runs candidate generation, roughly
-# doubling correction time, which the Phase 3a speedup paid for in advance.
-VALID_WORD_TRUST_FREQUENCY = 5000
+# The real pages -- the only honest gate here -- are identical at 0 and 1000,
+# and clearly worse at 5000, which breaks three words instead of one. Between 0
+# and 1000 the real pages cannot distinguish, so the tiebreak is that 0 fails
+# outright: it leaves ಜಿವನದಲ್ಲಿ uncorrected, which test_pipeline requires, and
+# at 0 this constant is a no-op anyway since every valid word short-circuits.
+#
+# 5000 was chosen at first on the strength of a measurement that turned out to
+# be wrong -- classify_changes compared words by substring containment, so a
+# correction that TRUNCATED a word counted as a fix. That inflated 5000's
+# apparent gain and hid its extra breaks entirely. See
+# tools/correction_bench.py for the bug.
+#
+# The cost is real: every word below this floor runs candidate generation,
+# roughly doubling correction time, which the Phase 3a speedup paid for.
+VALID_WORD_TRUST_FREQUENCY = 1000
 
 # How many times more corpus-attested a correction candidate must be than
 # the original word before suggest_kannada_word will actually apply it, once
