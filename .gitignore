@@ -74,11 +74,17 @@ tests/fixtures/eval/*.png
 tests/fixtures/eval/*_d[123].txt
 tests/fixtures/eval/*_d[123].para.txt
 
-# Extended Kannada dictionary (data/kn_IN.dic) -- 589,521 entries / 19MB, too
-# large to keep in git history and regenerated rather than edited. Source of
-# record is extended_data/kn_IN3.dic; see CLAUDE.md. The .aff rules ARE
-# committed, since they are small, hand-maintained and load-bearing.
+# The 589,521-entry Kannada dictionary IS committed, as data/kn_IN.dic.gz --
+# 2.5MB gzipped against 18.4MB raw, and pipeline.correction.dictionary reads
+# the .gz in place, so there is no decompression step and a fresh clone works.
+# Only an uncompressed copy is ignored: it is a local convenience (drop a
+# different .dic in to experiment) and it takes precedence over the .gz, so it
+# must never be committed or it would pin everyone to one person's experiment.
 data/kn_IN.dic
+
+# Working files for building the dictionary -- multi-GB word dumps and
+# intermediate builds. data/kn_IN.dic.gz is the shipped result.
+extended_data/
 
 # Real page/transcript fixtures live in tests/fixtures/real/ and ARE committed
 # -- they are small, and they are the only honest measurement this pipeline

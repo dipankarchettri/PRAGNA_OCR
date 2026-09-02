@@ -162,7 +162,9 @@ Stages run in this fixed order (see `corrector.py`):
 
    The errors are not symmetric, hence the split: a real word missing from membership gets "corrected" into something else (silent corpus corruption), while a junk string admitted as a target is somewhere the edit search can land.
 
-   **`data/kn_IN.dic` is gitignored** (19 MB) — source of record is `extended_data/kn_IN3.dic`, copied into place. The `.aff` rules are committed. The stock Hunspell `kn_IN` was 19,645 entries.
+   **The dictionary ships with the repo as `data/kn_IN.dic.gz`** (2.5 MB gzipped, 18.4 MB raw). `dictionary.py` reads the `.gz` in place — no decompression step, no build artifact to keep in sync, and a fresh clone works without `setup.py` fetching anything. An uncompressed `data/kn_IN.dic` still takes precedence if present, which keeps local experiments working; that path is gitignored so one person's experiment can't be committed over everyone's dictionary. The `.aff` rules are committed separately (small, hand-maintained, load-bearing).
+
+   Note the trap `setup.py` now guards: its fallback downloads the **stock LibreOffice `kn_IN`, 19,645 entries — 3% of this vocabulary**. Since a plain `.dic` beats the `.gz`, letting that run on a repo that already ships the dictionary would silently downgrade the pipeline. It is skipped whenever the `.gz` is present, and warns loudly if it ever does run.
 
    **Bigger is not better here.** A 2.5M-entry build was measured and rejected: harvested from corpus text containing OCR output, it admitted OCR errors as entries (`ಕಾಥಿ`, the misreading of `ಕಾಫಿ`, was listed at frequency 37) — and since membership means "never flag this", the dictionary taught the corrector that the error was correct. At identical settings 2.5M was worse on precision and broken-word count alike, on identical real-page results.
 

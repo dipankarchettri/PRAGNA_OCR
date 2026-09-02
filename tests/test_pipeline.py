@@ -3,6 +3,7 @@
 Unit and Integration Tests for Kannada OCR & Autocorrect Pipeline
 """
 
+import gzip
 import os
 import sys
 import unittest
@@ -15,9 +16,9 @@ from pipeline import init_pipeline
 from pipeline.correction.tokenizer import tokenize, reconstruct
 from pipeline.correction.ocr_repairs import normalize_script, clean_unicode_glitches, normalize_indic_repha
 from pipeline.correction.morphology import decompose_word, join_root_suffix
-from pipeline.correction.dictionary import get_dictionary
+from pipeline.correction.dictionary import get_dictionary, load_and_expand_dic, load_dictionary
 from pipeline.correction.edit_distance import weighted_edit_distance
-from pipeline.correction.corrector import correct_text, suggest_kannada_word
+from pipeline.correction.corrector import correct_text, suggest_kannada_word, clear_correction_caches
 from pipeline.exporter.pdf_generator import generate_pdf_from_text
 
 
@@ -399,6 +400,39 @@ class TestResolutionNormalization(unittest.TestCase):
         src = Image.new('RGB', (100, 140))
         out = normalize_resolution(src)
         self.assertLessEqual(out.size[0] / src.size[0], MAX_UPSCALE_FACTOR + 0.01)
+
+
+class TestGzippedDictionary(unittest.TestCase):
+    """
+    The dictionary ships as data/kn_IN.dic.gz and is read in place. This is
+    load-bearing: an uncompressed .dic takes precedence, and setup.py's fallback
+    downloads the 19,645-entry stock LibreOffice dictionary -- 3% of the real
+    vocabulary -- so if the .gz path ever silently stopped working, the pipeline
+    would keep running on a tiny word list rather than failing loudly.
+    """
+
+    def test_gz_is_present_and_readable(self):
+        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        gz = os.path.join(base, 'data', 'kn_IN.dic.gz')
+        self.assertTrue(os.path.exists(gz), 'data/kn_IN.dic.gz is missing')
+        with gzip.open(gz, 'rt', encoding='utf-8') as f:
+            self.assertTrue(f.readline().strip().isdigit())
+
+    def test_loads_from_gz_when_no_plain_dic(self):
+        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        plain = os.path.join(base, 'data', 'kn_IN.dic')
+        hidden = plain + '.testhidden'
+        moved = os.path.exists(plain)
+        if moved:
+            os.rename(plain, hidden)
+        try:
+            words = load_and_expand_dic(plain, os.path.join(base, 'data', 'kn_IN.aff'))
+            self.assertGreater(len(words), 500_000)
+        finally:
+            if moved:
+                os.rename(hidden, plain)
+            load_dictionary()
+            clear_correction_caches()
 
 
 if __name__ == '__main__':

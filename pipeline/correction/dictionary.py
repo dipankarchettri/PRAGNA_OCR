@@ -33,6 +33,7 @@ correct. Head to head at identical settings, 2.5M scored precision 0.667 with
 Vocabulary quality dominates vocabulary size here.
 """
 
+import gzip
 import os
 import re
 from typing import Dict, List, Optional, Set
@@ -123,13 +124,32 @@ def _parse_aff(aff_path: Optional[str]) -> Dict[str, List]:
     return sfx_rules
 
 
+def _open_dic(dic_path: str):
+    """
+    Open the .dic, transparently preferring a gzipped copy.
+
+    The 589k-entry dictionary is 18.4MB raw and 2.5MB gzipped, so git carries
+    the .gz and this reads it in place -- no decompression step, no build
+    artifact to keep in sync, and a fresh clone works without setup.py having
+    to fetch anything. A plain .dic still wins if one is present, which keeps
+    local experiments (drop a different .dic in and restart) working exactly as
+    before.
+    """
+    if os.path.exists(dic_path):
+        return open(dic_path, 'r', encoding='utf-8', errors='ignore')
+    if os.path.exists(dic_path + '.gz'):
+        return gzip.open(dic_path + '.gz', 'rt', encoding='utf-8', errors='ignore')
+    return None
+
+
 def load_and_expand_dic(dic_path: str, aff_path: Optional[str] = None) -> Set[str]:
     """Parse Hunspell .dic and .aff files, expanding suffix affix rules."""
     expanded_words = set()
     sfx_rules = _parse_aff(aff_path)
 
-    if os.path.exists(dic_path):
-        with open(dic_path, 'r', encoding='utf-8', errors='ignore') as f:
+    handle = _open_dic(dic_path)
+    if handle is not None:
+        with handle as f:
             for i, line in enumerate(f):
                 line = line.strip()
                 if i == 0 and line.isdigit():

@@ -14,6 +14,12 @@ DATA_DIR = os.path.join(BASE_DIR, 'data')
 FONTS_DIR = os.path.join(BASE_DIR, 'web', 'static', 'fonts')
 
 DIC_PATH = os.path.join(DATA_DIR, 'kn_IN.dic')
+# The 589k-entry dictionary ships gzipped (2.5MB vs 18.4MB) and
+# pipeline.correction.dictionary reads it in place. If it is present there is
+# nothing to fetch -- and nothing MUST be fetched, because a plain .dic takes
+# precedence over the .gz, so downloading the 19,645-entry stock LibreOffice
+# dictionary here would silently downgrade the pipeline to 3% of its vocabulary.
+DIC_GZ_PATH = DIC_PATH + '.gz'
 AFF_PATH = os.path.join(DATA_DIR, 'kn_IN.aff')
 FONT_PATH = os.path.join(FONTS_DIR, 'NotoSansKannada-Regular.ttf')
 # NotoSansKannada-Regular.ttf has no Latin glyph coverage at all (Google
@@ -39,7 +45,10 @@ def init_assets():
     print("Initializing Kannada OCR Pipeline Assets...")
 
     # 1. Dictionary kn_IN.dic
-    if os.path.exists(DIC_PATH):
+    if os.path.exists(DIC_GZ_PATH):
+        print(f"  [✓] kn_IN.dic.gz shipped with the repo "
+              f"({os.path.getsize(DIC_GZ_PATH)} bytes, read directly -- nothing to do)")
+    elif os.path.exists(DIC_PATH):
         print(f"  [✓] kn_IN.dic already exists ({os.path.getsize(DIC_PATH)} bytes)")
     elif os.path.exists(SOURCE_DIC):
         shutil.copy2(SOURCE_DIC, DIC_PATH)
@@ -49,6 +58,10 @@ def init_assets():
         try:
             urllib.request.urlretrieve(DIC_URL, DIC_PATH)
             print("  [✓] kn_IN.dic downloaded successfully")
+            print("  [!] NOTE: this is the stock LibreOffice kn_IN, 19,645 entries.")
+            print("      The pipeline is tuned for the 589,521-entry build normally")
+            print("      shipped as data/kn_IN.dic.gz -- expect much worse correction")
+            print("      coverage until that file is restored.")
         except Exception as e:
             print(f"  [!] Failed to download kn_IN.dic: {e}")
 
