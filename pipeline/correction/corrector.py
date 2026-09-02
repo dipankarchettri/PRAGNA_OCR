@@ -17,7 +17,7 @@ from .morphology import (
     BROKEN_SUFFIXES
 )
 from .ocr_repairs import normalize_script, clean_unicode_glitches
-from .ngram import train_model, score_candidate
+from .ngram import train_from_word_list, score_candidate
 
 # Strict protected tokens that should never be altered or fused
 PROTECTED_TOKENS = {
@@ -40,6 +40,10 @@ VOWEL_MATRA_MAP = {
 }
 
 KANNADA_CONSONANTS = set('ಕಖಗಘಙಚಛಜಝಞಟಠಡಢಣತಥದಧನಪಫಬಭಮಯರಱಲವಶಷಸಹಳೞ')
+
+# Dependent vowel signs (matras) + anusvara/virama -- small diacritics that
+# OCR frequently drops anywhere in a word, not just at word boundaries.
+KANNADA_VOWEL_SIGNS = 'ಾಿೀುೂೃೆೇೈೊೋೌಂ್'
 
 
 def heal_split_tokens(tokens: List[Dict[str, Any]], dictionary: Set[str]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
@@ -257,6 +261,17 @@ def generate_kannada_candidates(
             if res:
                 candidates.append((res, 0.35, 'word_correction'))
 
+        # Vowel-sign (matra) insertion at any position (handles a dropped
+        # diacritic anywhere in the word, e.g. a missing terminal locative
+        # ಿ or a missing mid-word ೆ) -- these are optically tiny marks and
+        # the single most common thing OCR silently loses.
+        for i in range(len(w) + 1):
+            for vs in KANNADA_VOWEL_SIGNS:
+                cand = w[:i] + vs + w[i:]
+                res = resolve_valid_surface_form(cand, dictionary)
+                if res:
+                    candidates.append((res, 0.35, 'ocr_repair'))
+
     # 11. Deduplicate candidates and score with weighted Levenshtein & N-gram Language Model
     candidate_dict: Dict[str, Tuple[float, str]] = {}
     for cand, base_cost, ctype in candidates:
@@ -265,12 +280,8 @@ def generate_kannada_candidates(
 
     ranked: List[Tuple[str, float, str]] = []
     for cand, (base_cost, ctype) in candidate_dict.items():
-        lm_bonus = 0.0
-        if prev_word or next_word:
-            lm_score = score_candidate(cand, prev_word, next_word)
-            # Normalize LM score into an additive bonus [0.0, 0.3]
-            lm_bonus = max(0.0, min(0.3, (lm_score + 10.0) / 20.0))
-
+        # score_candidate already returns a bounded [0.0, 0.3] bonus.
+        lm_bonus = score_candidate(cand, prev_word, next_word)
         final_score = round(base_cost - lm_bonus, 3)
         ranked.append((cand, final_score, ctype))
 
@@ -314,7 +325,7 @@ def correct_text(text: str) -> Dict[str, Any]:
     dictionary = get_dictionary()
     if not dictionary:
         load_dictionary()
-        train_model(get_word_list())
+        train_from_word_list(get_word_list())
 
     # Pre-pass: clean Unicode zero-digit / anusvara scanning artifacts & universal Repha
     pre_cleaned = normalize_script(text)

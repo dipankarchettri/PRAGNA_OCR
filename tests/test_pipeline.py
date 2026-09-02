@@ -107,6 +107,110 @@ class TestKannadaPipeline(unittest.TestCase):
         self.assertGreater(os.path.getsize(out), 500)
 
 
+class TestOCRLayoutGrouping(unittest.TestCase):
+    """
+    Regression tests for how word boxes are grouped into lines.
+
+    Tesseract's box hierarchy is page > block > paragraph > line > word, and line_num
+    restarts at 1 inside every paragraph. Grouping on (block_num, line_num) alone
+    merges the Nth line of every paragraph in a block into a single line, splicing
+    together text from unrelated parts of the page.
+    """
+
+    def _fake_tsv(self, rows):
+        """Build a pytesseract image_to_data DICT from (block, par, line, text) rows."""
+        data = {k: [] for k in ('block_num', 'par_num', 'line_num', 'left', 'top',
+                                'width', 'height', 'conf', 'text')}
+        for idx, (block, par, line, text) in enumerate(rows):
+            data['block_num'].append(block)
+            data['par_num'].append(par)
+            data['line_num'].append(line)
+            data['left'].append(10)
+            # Give each paragraph a distinct vertical band so ordering is well defined.
+            data['top'].append(par * 1000 + line * 40)
+            data['width'].append(100)
+            data['height'].append(30)
+            data['conf'].append(90)
+            data['text'].append(text)
+        return data
+
+    def _run(self, rows):
+        from PIL import Image
+        import pipeline.ocr.tesseract_engine as engine
+
+        fake = self._fake_tsv(rows)
+
+        class _FakeOutput:
+            DICT = 'dict'
+
+        real_pt, real_avail = engine.pytesseract, engine.is_tesseract_available
+        try:
+            engine.is_tesseract_available = lambda: True
+            engine.pytesseract = type('P', (), {
+                'image_to_data': staticmethod(lambda *a, **k: fake),
+                'Output': _FakeOutput,
+            })
+            img = Image.new('RGB', (800, 4000), 'white')
+            return engine.ocr_image_with_layout(img, lang='kan')
+        finally:
+            engine.pytesseract, engine.is_tesseract_available = real_pt, real_avail
+
+    def test_paragraphs_do_not_merge_into_one_line(self):
+        # Two paragraphs in the same block, each with a line numbered 1 and 2.
+        lines = self._run([
+            (1, 1, 1, 'ALPHA'),
+            (1, 1, 2, 'BETA'),
+            (1, 2, 1, 'GAMMA'),
+            (1, 2, 2, 'DELTA'),
+        ])
+        self.assertEqual(len(lines), 4, "each paragraph line must stay separate")
+        for line in lines:
+            self.assertEqual(len(line['text'].split()), 1,
+                             f"unrelated paragraphs merged into one line: {line['text']!r}")
+
+    def test_words_on_same_line_are_joined(self):
+        lines = self._run([
+            (1, 1, 1, 'ONE'),
+            (1, 1, 1, 'TWO'),
+        ])
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0]['text'], 'ONE TWO')
+
+    def test_line_confidence_is_reported(self):
+        lines = self._run([(1, 1, 1, 'ONE')])
+        self.assertIn('conf', lines[0])
+        self.assertAlmostEqual(lines[0]['conf'], 90.0)
+
+
+class TestResolutionNormalization(unittest.TestCase):
+    def test_low_resolution_page_is_upscaled(self):
+        from PIL import Image
+        from pipeline.ingestion import normalize_resolution
+        out = normalize_resolution(Image.new('RGB', (642, 912)))
+        self.assertGreater(max(out.size), 2000, "low-DPI page should be scaled up")
+
+    def test_aspect_ratio_is_preserved(self):
+        from PIL import Image
+        from pipeline.ingestion import normalize_resolution
+        src = Image.new('RGB', (642, 912))
+        out = normalize_resolution(src)
+        self.assertAlmostEqual(src.size[0] / src.size[1], out.size[0] / out.size[1], places=2)
+
+    def test_high_resolution_page_is_untouched(self):
+        from PIL import Image
+        from pipeline.ingestion import normalize_resolution
+        src = Image.new('RGB', (2480, 3508))
+        self.assertIs(normalize_resolution(src), src, "already-high-DPI page must not be resized")
+
+    def test_upscale_is_capped(self):
+        from PIL import Image
+        from pipeline.ingestion import normalize_resolution
+        from pipeline.ingestion.image_processor import MAX_UPSCALE_FACTOR
+        src = Image.new('RGB', (100, 140))
+        out = normalize_resolution(src)
+        self.assertLessEqual(out.size[0] / src.size[0], MAX_UPSCALE_FACTOR + 0.01)
+
+
 if __name__ == '__main__':
     unittest.main()
 

@@ -100,10 +100,16 @@ Open **`http://127.0.0.1:5000`** in your browser.
 
 ```bash
 # Process a single scanned PDF or Image document
-python cli.py scan.pdf --lang kan+eng --dpi 300 --output-dir ./results
+python cli.py scan.pdf --lang kan --dpi 400 --output-dir ./results
 
 # Process an image file and save preprocessed sheets
-python cli.py book_page.jpg --lang kan+eng --save-images
+python cli.py book_page.jpg --lang kan --save-images
+
+# Pages with mixed layout (title pages, tables of contents, multi-column)
+python cli.py frontmatter.pdf --psm 3
+
+# Drop low-confidence words instead of letting the corrector guess at them
+python cli.py faint_scan.jpg --min-confidence 40
 
 # Direct text correction from terminal
 python cli.py --text "ಶಿಕ್ಷಣವು ಪ್ರತಿಯೊಬ್ಬ ವ್ಯಕ್ತಿಯ ಜಿವನದಲ್ಲಿ ಪ್ರಮುಖ ಪಾತ್ರ ವಹಿಸುತದೆ"
@@ -123,6 +129,41 @@ Run the automated test suite:
 ```bash
 ./venv/bin/python tests/test_pipeline.py
 ```
+
+### Tuning OCR accuracy
+
+`tools/ocr_bench.py` sweeps Tesseract settings over sample pages and reports which
+combination produces the cleanest Kannada, so configuration changes can be measured
+rather than guessed at:
+
+```bash
+# Compare page segmentation modes and resolution handling
+./venv/bin/python tools/ocr_bench.py page.jpg --psm 3,4,6 --upscale 0,1
+
+# Write each configuration's output for side-by-side reading
+./venv/bin/python tools/ocr_bench.py page.jpg --dump ./bench_out
+```
+
+It ranks by two ground-truth-free proxies — the share of Kannada tokens the correction
+engine recognizes, and the count of Latin-script runs (misrecognized glyphs, which are
+unrecoverable downstream). Drop a `.txt` transcript next to an image with the same
+basename and it reports true character error rate and ranks by that instead.
+
+### OCR defaults
+
+| Setting | Default | Rationale |
+|---|---|---|
+| `--lang` | `kan` | Adding `eng` to a monolingual Kannada page makes Tesseract emit Latin for ambiguous glyphs; the correction engine skips non-Kannada tokens, so that output is unrecoverable. |
+| `--psm` | `6` | Measured best on single-column book pages. Use `3` for genuinely mixed layouts. |
+| `--oem` | `1` | LSTM only. The `tessdata_best` models ship no legacy engine. |
+| `--dpi` | `400` | Kannada ottakshara (subscript conjuncts) alias badly at 300. |
+
+Low-resolution images are automatically upscaled to roughly 300 DPI before OCR
+(`pipeline/ingestion/image_processor.py`). Phone photos and web-sized scans are often
+near 100 DPI, at which conjuncts collapse into a smudge that no dictionary can repair.
+
+The bundled `tessdata/kan.traineddata` is the `tessdata_best` LSTM model; the smaller
+stock model is kept at `tessdata_standard/` for comparison.
 
 ---
 

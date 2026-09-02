@@ -27,6 +27,8 @@ from pipeline import (
 from pipeline.ocr import (
     is_tesseract_available,
     get_available_languages,
+    DEFAULT_PSM,
+    DEFAULT_OEM,
     SUPPORTED_LANGUAGES
 )
 from pipeline.correction import get_dictionary, get_word_list
@@ -159,8 +161,10 @@ def api_process_stream(session_id: str):
     if not session_data:
         return jsonify({'error': 'Invalid or expired upload session.'}), 404
 
-    lang = request.args.get('lang', 'kan+eng')
-    dpi = int(request.args.get('dpi', 300))
+    lang = request.args.get('lang', 'kan')
+    dpi = int(request.args.get('dpi', 400))
+    psm = int(request.args.get('psm', DEFAULT_PSM))
+    oem = int(request.args.get('oem', DEFAULT_OEM))
     save_images = request.args.get('save_images', 'false').lower() == 'true'
 
     upload_path = session_data['upload_path']
@@ -178,6 +182,8 @@ def api_process_stream(session_id: str):
                 input_path=upload_path,
                 lang=lang,
                 dpi=dpi,
+                psm=psm,
+                oem=oem,
                 output_dir=output_dir,
                 save_pdf=True,
                 save_images=save_images,
@@ -243,8 +249,10 @@ def api_process_document():
     if not file.filename or not is_allowed_file(file.filename):
         return jsonify({'error': f'Unsupported file type. Allowed: {", ".join(sorted(ALLOWED_EXTENSIONS))}'}), 400
 
-    lang = request.form.get('lang', 'kan+eng')
-    dpi = int(request.form.get('dpi', 300))
+    lang = request.form.get('lang', 'kan')
+    dpi = int(request.form.get('dpi', 400))
+    psm = int(request.form.get('psm', DEFAULT_PSM))
+    oem = int(request.form.get('oem', DEFAULT_OEM))
     save_images = request.form.get('save_images', 'false').lower() == 'true'
 
     session_id = uuid.uuid4().hex
@@ -260,6 +268,8 @@ def api_process_document():
             input_path=upload_path,
             lang=lang,
             dpi=dpi,
+            psm=psm,
+            oem=oem,
             output_dir=output_dir,
             save_pdf=True,
             save_images=save_images
@@ -314,6 +324,6 @@ def download_output(session_id: str, file_type: str):
 
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
+    port = int(os.environ.get('PORT', 5010))
     print(f"Starting Kannada OCR & Autocorrect Web App on http://127.0.0.1:{port}")
     app.run(host='0.0.0.0', port=port, debug=False, threaded=True)

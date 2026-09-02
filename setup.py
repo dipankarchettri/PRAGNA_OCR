@@ -16,10 +16,16 @@ FONTS_DIR = os.path.join(BASE_DIR, 'web', 'static', 'fonts')
 DIC_PATH = os.path.join(DATA_DIR, 'kn_IN.dic')
 AFF_PATH = os.path.join(DATA_DIR, 'kn_IN.aff')
 FONT_PATH = os.path.join(FONTS_DIR, 'NotoSansKannada-Regular.ttf')
+# NotoSansKannada-Regular.ttf has no Latin glyph coverage at all (Google
+# ships each Noto Sans <Script> font as a script-only subset); this pairs
+# with it as an fpdf2 fallback font so English/digit/punctuation runs in a
+# source document still render in the exported PDF instead of going blank.
+FALLBACK_FONT_PATH = os.path.join(FONTS_DIR, 'NotoSans-Regular.ttf')
 
 DIC_URL = 'https://raw.githubusercontent.com/LibreOffice/dictionaries/master/kn_IN/kn_IN.dic'
 AFF_URL = 'https://raw.githubusercontent.com/LibreOffice/dictionaries/master/kn_IN/kn_IN.aff'
 FONT_URL = 'https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSansKannada/NotoSansKannada-Regular.ttf'
+FALLBACK_FONT_URL = 'https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSans/NotoSans-Regular.ttf'
 
 # Local fallback paths from neighbor repos
 SOURCE_DIC = os.path.join(BASE_DIR, '..', 'Kannada-Autocorrect', 'data', 'kn_IN.dic')
@@ -72,6 +78,26 @@ def init_assets():
             )
             with urllib.request.urlopen(req) as resp, open(FONT_PATH, 'wb') as out_f:
                 shutil.copyfileobj(resp, out_f)
+            print("  [✓] NotoSansKannada-Regular.ttf downloaded successfully")
+        except Exception as e:
+            print(f"  [!] Failed to download NotoSansKannada-Regular.ttf: {e}")
+
+    # 3b. Noto Sans (Latin fallback, paired with NotoSansKannada for PDF export)
+    if os.path.exists(FALLBACK_FONT_PATH):
+        print(f"  [✓] NotoSans-Regular.ttf already exists ({os.path.getsize(FALLBACK_FONT_PATH)} bytes)")
+    else:
+        print("  [↓] Downloading NotoSans-Regular.ttf...")
+        try:
+            req = urllib.request.Request(
+                FALLBACK_FONT_URL,
+                headers={'User-Agent': 'Mozilla/5.0'}
+            )
+            with urllib.request.urlopen(req) as resp, open(FALLBACK_FONT_PATH, 'wb') as out_f:
+                shutil.copyfileobj(resp, out_f)
+            print("  [✓] NotoSans-Regular.ttf downloaded successfully")
+        except Exception as e:
+            print(f"  [!] Failed to download NotoSans-Regular.ttf: {e}")
+
     # 4. Tesseract Language Models
     TESSDATA_DIR = os.path.join(BASE_DIR, 'tessdata')
     os.makedirs(TESSDATA_DIR, exist_ok=True)
@@ -93,6 +119,19 @@ def init_assets():
                 print(f"  [✓] {model_name} downloaded successfully")
             except Exception as e:
                 print(f"  [!] Failed to download {model_name}: {e}")
+
+    # 5. N-gram language model (real-corpus word/bigram frequencies for context
+    # ranking). Not auto-downloaded here -- it's built from a large external
+    # corpus offline; see tools/build_ngram_model.py. Without it the pipeline
+    # falls back to unigram-only counts from the dictionary (still correct,
+    # just unable to use surrounding words to disambiguate candidates).
+    NGRAM_MODEL_PATH = os.path.join(DATA_DIR, 'ngram_model.pkl.gz')
+    if os.path.exists(NGRAM_MODEL_PATH):
+        print(f"  [✓] ngram_model.pkl.gz already exists ({os.path.getsize(NGRAM_MODEL_PATH)} bytes)")
+    else:
+        print("  [i] ngram_model.pkl.gz not found -- context-aware ranking will fall back to "
+              "unigram-only dictionary counts. Run tools/build_ngram_model.py to build it from a "
+              "real Kannada corpus.")
 
     print("\nAsset initialization complete!")
 

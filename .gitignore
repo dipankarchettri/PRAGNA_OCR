@@ -47,3 +47,9 @@ Thumbs.db
 # Test outputs
 tests/output/
 test_output.pdf
+
+# N-gram training corpus & cached model -- multi-GB/hundreds-of-MB, exceeds
+# GitHub's 100MB file limit and shouldn't live in git history. Rebuild via
+# tools/build_ngram_model.py --download (see CLAUDE.md).
+data/corpus_kn/
+data/ngram_model.pkl.gz

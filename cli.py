@@ -6,7 +6,7 @@ cleaning Indic OCR errors, and exporting corrected documents.
 
 Examples:
     python cli.py sample.pdf
-    python cli.py document.png --lang kan+eng --dpi 300 --output-dir ./results
+    python cli.py document.png --lang kan --dpi 400 --output-dir ./results
     python cli.py --text "ಶಿಕ್ಷಣವು ಪ್ರತಿಯೊಬ್ಬ ವ್ಯಕ್ತಿಯ ಜಿವನದಲ್ಲಿ ಪ್ರಮುಖ ಪಾತ್ರ ವಹಿಸುತದೆ"
     python cli.py --batch ./scans/ --output-dir ./all_results/
 """
@@ -25,7 +25,7 @@ from pipeline import (
     process_text_input,
     init_pipeline
 )
-from pipeline.ocr import is_tesseract_available, SUPPORTED_LANGUAGES
+from pipeline.ocr import is_tesseract_available, SUPPORTED_LANGUAGES, DEFAULT_PSM, DEFAULT_OEM
 from pipeline.ingestion import SUPPORTED_IMAGE_EXTENSIONS
 
 
@@ -47,17 +47,27 @@ def handle_single_file(args):
     print(f"[*] Processing file: {Path(filepath).name}")
     print(f"    Language      : {args.lang}")
     print(f"    DPI           : {args.dpi}")
+    print(f"    PSM / OEM     : {args.psm} / {args.oem}")
     print(f"    Generate PDF  : {'Yes' if not args.no_pdf else 'No'}")
     print(f"    Save Images   : {'Yes' if args.save_images else 'No'}\n")
 
-    def progress_cb(current, total):
-        print(f"    -> Processing page {current}/{total}...")
+    def progress_cb(info):
+        # process_document reports progress as a single dict, not (current, total).
+        msg = info.get('message', info.get('stage', ''))
+        if info.get('total_pages'):
+            print(f"    -> [{info.get('percent', 0):3d}%] page "
+                  f"{info.get('current_page', '?')}/{info['total_pages']}: {msg}")
+        else:
+            print(f"    -> [{info.get('percent', 0):3d}%] {msg}")
 
     try:
         res = process_document(
             input_path=filepath,
             lang=args.lang,
             dpi=args.dpi,
+            psm=args.psm,
+            oem=args.oem,
+            min_confidence=args.min_confidence,
             output_dir=args.output_dir,
             save_pdf=not args.no_pdf,
             save_images=args.save_images,
@@ -111,6 +121,9 @@ def handle_batch(args):
                 input_path=fpath,
                 lang=args.lang,
                 dpi=args.dpi,
+                psm=args.psm,
+                oem=args.oem,
+                min_confidence=args.min_confidence,
                 output_dir=item_out,
                 save_pdf=not args.no_pdf,
                 save_images=args.save_images
@@ -151,14 +164,19 @@ Supported Indic Language Codes:
   {', '.join(f'{code} ({name})' for code, name in SUPPORTED_LANGUAGES.items())}
 
 Combine multiple languages with '+': --lang kan+eng or --lang san+kan
+Prefer a single script when the page is monolingual -- adding 'eng' to a pure
+Kannada page lets Tesseract emit Latin for ambiguous glyphs.
         """
     )
 
     parser.add_argument('input_file', nargs='?', help='Path to PDF document or image file to process')
     parser.add_argument('--text', '-t', help='Direct text string to clean and autocorrect')
     parser.add_argument('--batch', '-b', help='Directory of PDFs/images to process in batch mode')
-    parser.add_argument('--lang', '-l', default='kan+eng', help='Tesseract OCR language code(s) (default: kan+eng)')
-    parser.add_argument('--dpi', '-d', type=int, default=300, help='DPI for PDF page rasterization (default: 300)')
+    parser.add_argument('--lang', '-l', default='kan', help='Tesseract OCR language code(s) (default: kan)')
+    parser.add_argument('--dpi', '-d', type=int, default=400, help='DPI for PDF page rasterization (default: 400)')
+    parser.add_argument('--psm', type=int, default=DEFAULT_PSM, help=f'Tesseract page segmentation mode (default: {DEFAULT_PSM}; use 3 for mixed/multi-column layouts)')
+    parser.add_argument('--oem', type=int, default=DEFAULT_OEM, help=f'Tesseract OCR engine mode (default: {DEFAULT_OEM} = LSTM only)')
+    parser.add_argument('--min-confidence', type=int, default=0, help='Drop OCR words below this confidence (0-100, default: 0 = keep all)')
     parser.add_argument('--output-dir', '-o', help='Output directory for generated files')
     parser.add_argument('--no-pdf', action='store_true', help='Skip generating corrected PDF document')
     parser.add_argument('--save-images', '-s', action='store_true', help='Save rasterized intermediate page images')

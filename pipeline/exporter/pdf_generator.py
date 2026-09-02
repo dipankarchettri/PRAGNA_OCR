@@ -9,6 +9,13 @@ from fpdf import FPDF, Align
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DEFAULT_FONT_PATH = os.path.join(BASE_DIR, 'web', 'static', 'fonts', 'NotoSansKannada-Regular.ttf')
+# NotoSansKannada-Regular.ttf is a script-specific Noto subset with no Latin
+# coverage at all (not even ASCII) -- Google ships each Noto Sans <Script>
+# font this way, expecting it paired with the Latin-covering base "Noto
+# Sans" font for full text. Registered as an fpdf2 fallback font below so
+# any English/digit/punctuation run in the source document still renders
+# instead of dropping to a blank glyph.
+DEFAULT_FALLBACK_FONT_PATH = os.path.join(BASE_DIR, 'web', 'static', 'fonts', 'NotoSans-Regular.ttf')
 
 _ALIGN_MAP = {'L': Align.L, 'C': Align.C, 'R': Align.R}
 
@@ -39,7 +46,11 @@ class _KannadaPDFDocument(FPDF):
             pass
 
 
-def _ensure_kannada_font(pdf: _KannadaPDFDocument, font_path: Optional[str] = None):
+def _ensure_kannada_font(
+    pdf: _KannadaPDFDocument,
+    font_path: Optional[str] = None,
+    fallback_font_path: Optional[str] = None
+):
     font_file = font_path or DEFAULT_FONT_PATH
     if not os.path.exists(font_file):
         raise FileNotFoundError(
@@ -47,19 +58,25 @@ def _ensure_kannada_font(pdf: _KannadaPDFDocument, font_path: Optional[str] = No
         )
     pdf.add_font('NotoKannada', fname=font_file)
 
+    fallback_file = fallback_font_path or DEFAULT_FALLBACK_FONT_PATH
+    if os.path.exists(fallback_file):
+        pdf.add_font('NotoLatinFallback', fname=fallback_file)
+        pdf.set_fallback_fonts(['NotoLatinFallback'])
+
 
 def generate_pdf_from_text(
     text: str,
     output_path: str,
     title: str = 'Corrected Document',
-    font_path: Optional[str] = None
+    font_path: Optional[str] = None,
+    fallback_font_path: Optional[str] = None
 ) -> str:
     """
     Generate a simple formatted PDF from a block of corrected Kannada text.
     """
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
     pdf = _KannadaPDFDocument()
-    _ensure_kannada_font(pdf, font_path)
+    _ensure_kannada_font(pdf, font_path, fallback_font_path)
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
     
@@ -81,14 +98,15 @@ def generate_pdf_from_text(
 def generate_pdf_from_layout(
     layout_lines: List[Dict[str, Any]],
     output_path: str,
-    font_path: Optional[str] = None
+    font_path: Optional[str] = None,
+    fallback_font_path: Optional[str] = None
 ) -> str:
     """
     Generate a layout-preserving PDF respecting extracted line alignments (Left, Center, Right).
     """
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
     pdf = _KannadaPDFDocument()
-    _ensure_kannada_font(pdf, font_path)
+    _ensure_kannada_font(pdf, font_path, fallback_font_path)
     pdf.set_auto_page_break(auto=True, margin=15)
     
     current_page = None

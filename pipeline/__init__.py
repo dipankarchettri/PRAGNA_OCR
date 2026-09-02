@@ -10,12 +10,19 @@ from typing import Dict, Any, Optional, List
 from pathlib import Path
 
 from .ingestion import (
-    is_pdf_file, is_image_file, inspect_pdf,
+    is_pdf_file, is_image_file, inspect_pdf, get_page_blocks,
     extract_searchable_pdf_layout, rasterize_pdf_to_images,
-    load_and_preprocess_image
+    rasterize_page_masking_valid_text,
+    load_and_preprocess_image, normalize_resolution
 )
-from .ocr import is_tesseract_available, ocr_image, ocr_image_with_layout, SUPPORTED_LANGUAGES
-from .correction import load_dictionary, train_model, get_word_list, correct_text, correct_layout_lines
+from .ocr import (
+    is_tesseract_available, ocr_image, ocr_image_with_layout,
+    SUPPORTED_LANGUAGES, DEFAULT_PSM, DEFAULT_OEM
+)
+from .correction import (
+    load_dictionary, train_from_word_list, load_ngram_model, add_vocabulary,
+    get_word_list, correct_text, correct_layout_lines
+)
 from .exporter import (
     generate_pdf_from_text,
     generate_pdf_from_layout,
@@ -34,7 +41,15 @@ def init_pipeline(dic_path: Optional[str] = None):
         return
 
     load_dictionary(dic_path)
-    train_model(get_word_list())
+
+    # Prefer a real-corpus-trained model (built via tools/build_ngram_model.py)
+    # if one has been cached; fall back to unigram-only dictionary counts so
+    # the pipeline still works with no extra setup.
+    if load_ngram_model():
+        add_vocabulary(get_word_list())
+    else:
+        train_from_word_list(get_word_list())
+
     _INITIALIZED = True
 
 
@@ -49,12 +64,15 @@ def process_text_input(text: str) -> Dict[str, Any]:
 
 def process_document(
     input_path: str,
-    lang: str = 'kan+eng',
-    dpi: int = 300,
+    lang: str = 'kan',
+    dpi: int = 400,
     output_dir: Optional[str] = None,
     save_pdf: bool = True,
     save_images: bool = False,
-    progress_callback: Optional[callable] = None
+    progress_callback: Optional[callable] = None,
+    psm: int = DEFAULT_PSM,
+    oem: int = DEFAULT_OEM,
+    min_confidence: int = 0
 ) -> Dict[str, Any]:
     """
     End-to-end processing pipeline for a PDF or image file:
@@ -90,18 +108,28 @@ def process_document(
             progress_callback({'stage': 'inspecting', 'message': 'Analyzing PDF document...', 'percent': 5})
 
         pdf_info = inspect_pdf(input_path)
-        is_searchable = pdf_info['is_searchable']
         page_count = pdf_info['page_count']
+        page_classifications = pdf_info['page_classifications']
 
-        if is_searchable:
-            if progress_callback:
-                progress_callback({'stage': 'extracting', 'message': f'Extracting digital text from {page_count} pages...', 'percent': 30})
+        # Decide per page, not per document -- and for a page that mixes a
+        # trustworthy block with a mojibake one (legacy non-Unicode font,
+        # see inspect_pdf / _page_text_is_valid), decide per block within
+        # that page too. Otherwise a page-level decision would either OCR
+        # text that's already fine, or keep garbage text next to it.
+        fully_digital_pages = [i + 1 for i, c in enumerate(page_classifications) if c == 'searchable']
+        needs_ocr_pages = [i + 1 for i, c in enumerate(page_classifications) if c != 'searchable']
 
-            # Digital Searchable PDF -> PyMuPDF Layout Extraction
-            layout_lines = extract_searchable_pdf_layout(input_path)
-            
+        pages_by_num: Dict[int, Dict[str, Any]] = {}
+
+        if fully_digital_pages:
             if progress_callback:
-                progress_callback({'stage': 'correcting', 'message': 'Applying morphological cleaning and Sandhi rules...', 'percent': 70})
+                progress_callback({'stage': 'extracting', 'message': f'Extracting digital text from {len(fully_digital_pages)} page(s)...', 'percent': 20})
+
+            # Fully searchable pages -> PyMuPDF Layout Extraction
+            layout_lines = extract_searchable_pdf_layout(input_path, pages=fully_digital_pages)
+
+            if progress_callback:
+                progress_callback({'stage': 'correcting', 'message': 'Applying morphological cleaning and Sandhi rules...', 'percent': 40})
 
             corrected_lines, corrections = correct_layout_lines(layout_lines)
             all_layout_lines.extend(corrected_lines)
@@ -113,49 +141,80 @@ def process_document(
                 p = line.get('page_num', 1)
                 pages_map.setdefault(p, []).append(line['text'])
 
-            for p in sorted(pages_map.keys()):
-                raw_page_text = '\n'.join(pages_map[p])
+            for p in fully_digital_pages:
+                raw_page_text = '\n'.join(pages_map.get(p, []))
                 corr_res = correct_text(raw_page_text)
-                pages_result.append({
+                pages_by_num[p] = {
                     'page_num': p,
                     'raw_text': raw_page_text,
                     'corrected_text': corr_res['corrected'],
                     'has_errors': corr_res['has_errors'],
                     'corrections': corr_res['corrections']
-                })
-        else:
-            # Scanned PDF -> Rasterize + Tesseract OCR
+                }
+
+        if needs_ocr_pages:
+            # Remaining pages -> Rasterize + Tesseract OCR. A 'scanned' page
+            # has no trustworthy blocks at all, so this is a full-page OCR
+            # exactly as before. A 'mixed' page has some -- those regions
+            # are painted over before OCR runs (rasterize_page_masking_valid_text)
+            # so Tesseract only reads what the text layer can't be trusted
+            # for, and the untouched digital text is merged back in by
+            # vertical position afterwards.
             if not is_tesseract_available():
-                raise RuntimeError("Tesseract OCR is required for scanned PDFs, but is not installed in PATH.")
+                raise RuntimeError("Tesseract OCR is required for scanned pages, but is not installed in PATH.")
 
-            if progress_callback:
-                progress_callback({'stage': 'rasterizing', 'message': f'Rasterizing {page_count} pages at {dpi} DPI...', 'percent': 15})
-
-            images = rasterize_pdf_to_images(input_path, dpi=dpi)
-            total_pages_count = len(images)
             img_dir = os.path.join(output_dir, 'images')
             if save_images:
                 os.makedirs(img_dir, exist_ok=True)
 
-            for i, img in enumerate(images):
-                page_num = i + 1
-                ocr_pct = int(15 + ((i + 1) / total_pages_count) * 70)
+            for i, page_num in enumerate(needs_ocr_pages):
+                ocr_pct = int(45 + ((i + 1) / len(needs_ocr_pages)) * 45)
                 if progress_callback:
                     progress_callback({
                         'stage': 'ocr',
                         'current_page': page_num,
-                        'total_pages': total_pages_count,
+                        'total_pages': page_count,
                         'percent': ocr_pct,
-                        'message': f'OCR Processing Page {page_num} of {total_pages_count}...'
+                        'message': f'OCR Processing Page {page_num} of {page_count}...'
                     })
+
+                blocks = get_page_blocks(input_path, page_num)
+                img = rasterize_page_masking_valid_text(input_path, page_num, dpi, blocks)
 
                 if save_images:
                     img_path = os.path.join(img_dir, f"page_{page_num:03d}.png")
                     img.save(img_path, 'PNG')
                     saved_images_paths.append(img_path)
 
-                # OCR with layout
-                lines = ocr_image_with_layout(img, lang=lang, page_num=page_num)
+                # OCR with layout. normalize_resolution is a no-op for pages already
+                # rasterized above the target, but protects against low --dpi settings
+                # (it may upscale img further, which is why the OCR->points scale
+                # below is derived from the actual image fed to OCR, not just dpi).
+                ocr_img = normalize_resolution(img)
+                ocr_lines = ocr_image_with_layout(
+                    ocr_img,
+                    lang=lang,
+                    page_num=page_num,
+                    psm=psm,
+                    oem=oem,
+                    min_confidence=min_confidence
+                )
+                # OCR line coords are pixels in ocr_img; digital-extraction
+                # coords are PDF points (72 dpi). Convert to points so a
+                # mixed page's two sources can be merged into one reading
+                # order by vertical position.
+                effective_dpi = dpi * (ocr_img.width / img.width)
+                scale = effective_dpi / 72.0
+                for l in ocr_lines:
+                    l['top'] /= scale
+                    l['left'] /= scale
+                    l['width'] /= scale
+                    l['height'] /= scale
+
+                digital_lines = extract_searchable_pdf_layout(input_path, pages=[page_num]) if any(b['is_valid'] for b in blocks) else []
+                lines = digital_lines + ocr_lines
+                lines.sort(key=lambda l: (l['top'], l['left']))
+
                 corrected_lines, page_corrections = correct_layout_lines(lines)
                 all_layout_lines.extend(corrected_lines)
                 all_corrections.extend(page_corrections)
@@ -163,13 +222,20 @@ def process_document(
                 raw_page_text = '\n'.join(l['text'] for l in lines)
                 corr_page_text = '\n'.join(l['text'] for l in corrected_lines)
 
-                pages_result.append({
+                pages_by_num[page_num] = {
                     'page_num': page_num,
                     'raw_text': raw_page_text,
                     'corrected_text': corr_page_text,
                     'has_errors': len(page_corrections) > 0,
                     'corrections': page_corrections
-                })
+                }
+
+        pages_result.extend(pages_by_num[p] for p in sorted(pages_by_num.keys()))
+        # generate_pdf_from_layout starts a new PDF page whenever page_num
+        # changes between consecutive lines, so the digital-extraction batch
+        # and the OCR batch (appended separately above) must be reordered
+        # into overall page order before export.
+        all_layout_lines.sort(key=lambda l: l.get('page_num', 1))
 
 
     # ─────────────────────────────────────────────────────────
@@ -187,7 +253,10 @@ def process_document(
             img.save(img_path, 'PNG')
             saved_images_paths.append(img_path)
 
-        lines = ocr_image_with_layout(img, lang=lang, page_num=1)
+        lines = ocr_image_with_layout(
+            img, lang=lang, page_num=1,
+            psm=psm, oem=oem, min_confidence=min_confidence
+        )
         corrected_lines, page_corrections = correct_layout_lines(lines)
         all_layout_lines.extend(corrected_lines)
         all_corrections.extend(page_corrections)

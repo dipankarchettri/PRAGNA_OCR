@@ -72,7 +72,21 @@ def get_available_languages() -> List[str]:
     return sorted(list(langs)) if langs else ['kan', 'eng']
 
 
-def _get_tesseract_config(psm: int = 3, oem: int = 3) -> str:
+# Page segmentation mode. PSM 3 (fully automatic) was the previous default. Measured
+# on single-column Kannada book pages via tools/ocr_bench.py, PSM 6 ("assume a single
+# uniform block of text") scores meaningfully better on both vocabulary validity and
+# mean confidence; PSM 3 and 4 came out identical to each other and behind it.
+# Pass psm=3 explicitly for pages with genuinely mixed layout -- title pages, tables of
+# contents, multi-column matter -- where automatic segmentation earns its keep.
+DEFAULT_PSM = 6
+
+# OCR engine mode. OEM 1 is LSTM-only. The legacy engine has no Kannada support worth
+# using, and the tessdata_best models are LSTM-only anyway, so asking for OEM 3
+# (legacy + LSTM) just adds a fallback path that can only make Indic output worse.
+DEFAULT_OEM = 1
+
+
+def _get_tesseract_config(psm: int = DEFAULT_PSM, oem: int = DEFAULT_OEM) -> str:
     parts = [f'--oem {oem}', f'--psm {psm}']
     if os.path.exists(LOCAL_TESSDATA_DIR):
         parts.append(f'--tessdata-dir "{LOCAL_TESSDATA_DIR}"')
@@ -81,9 +95,9 @@ def _get_tesseract_config(psm: int = 3, oem: int = 3) -> str:
 
 def ocr_image(
     image: Image.Image,
-    lang: str = 'kan+eng',
-    psm: int = 3,
-    oem: int = 3
+    lang: str = 'kan',
+    psm: int = DEFAULT_PSM,
+    oem: int = DEFAULT_OEM
 ) -> str:
     """
     Extract raw text from a PIL Image using Tesseract OCR.
@@ -98,17 +112,23 @@ def ocr_image(
 
 def ocr_image_with_layout(
     image: Image.Image,
-    lang: str = 'kan+eng',
-    page_num: int = 1
+    lang: str = 'kan',
+    page_num: int = 1,
+    psm: int = DEFAULT_PSM,
+    oem: int = DEFAULT_OEM,
+    min_confidence: int = 0
 ) -> List[Dict[str, Any]]:
     """
     Perform OCR and extract structured layout lines with estimated horizontal alignment.
+
+    Word-level confidence is retained on each line as 'conf' (mean over its boxes) so
+    downstream correction can decide how hard to push on uncertain text.
     """
     if not is_tesseract_available():
         raise RuntimeError("Tesseract OCR is not installed or not available in PATH.")
 
     img_w, img_h = image.size
-    config = _get_tesseract_config()
+    config = _get_tesseract_config(psm=psm, oem=oem)
     data = pytesseract.image_to_data(image, lang=lang, config=config, output_type=pytesseract.Output.DICT)
 
     # Group extracted word boxes by block and line
@@ -119,12 +139,18 @@ def ocr_image_with_layout(
         text = data['text'][i].strip()
         conf = int(data['conf'][i]) if str(data['conf'][i]).isdigit() or isinstance(data['conf'][i], (int, float)) else -1
 
-        if not text or conf < 0:
+        if not text or conf < 0 or conf < min_confidence:
             continue
 
+        # Tesseract's box hierarchy is page > block > paragraph > line > word, and
+        # line_num restarts at 1 inside every paragraph. Keying on (block, line) alone
+        # therefore merges the Nth line of every paragraph in a block into one line,
+        # splicing together text from unrelated parts of the page. par_num is required
+        # to identify a line uniquely.
         block_num = data['block_num'][i]
+        par_num = data['par_num'][i]
         line_num = data['line_num'][i]
-        key = (block_num, line_num)
+        key = (block_num, par_num, line_num)
 
         box_info = {
             'text': text,
@@ -168,10 +194,21 @@ def ocr_image_with_layout(
             'top': min_top,
             'width': line_width,
             'height': max_bottom - min_top,
-            'page_num': page_num
+            'page_num': page_num,
+            'conf': sum(b['conf'] for b in boxes) / len(boxes)
         })
 
-    # Sort layout lines top-to-bottom with baseline tolerance to maintain natural reading order
-    layout_lines.sort(key=lambda l: (round(l['top'] / 12.0), l['left']))
+    # Sort layout lines top-to-bottom with baseline tolerance to maintain natural reading
+    # order. The tolerance must scale with the image: a fixed pixel bucket that works at
+    # 100 DPI will split a single line across two buckets once the page is upscaled.
+    # Half the median line height tracks the text size at any resolution.
+    if layout_lines:
+        heights = sorted(l['height'] for l in layout_lines)
+        median_height = heights[len(heights) // 2]
+        row_tolerance = max(1.0, median_height / 2.0)
+    else:
+        row_tolerance = 1.0
+
+    layout_lines.sort(key=lambda l: (round(l['top'] / row_tolerance), l['left']))
 
     return layout_lines
