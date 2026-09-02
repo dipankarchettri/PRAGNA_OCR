@@ -5,7 +5,7 @@ Combines: Universal Script Normalization -> Space Healing -> Dynamic Indic Candi
 
 import re
 from typing import Dict, List, Tuple, Any, Optional, Set
-from .dictionary import get_dictionary, get_word_list, load_dictionary
+from .dictionary import get_dictionary, get_word_list, load_dictionary, is_correction_target
 from .tokenizer import tokenize, reconstruct
 from .edit_distance import weighted_edit_distance, GLYPH_CONFUSIONS
 from .morphology import (
@@ -491,6 +491,21 @@ def suggest_kannada_word(word: str, prev_word: Optional[str] = None, next_word: 
             is_unconstrained = corr_type == 'word_correction_unconstrained'
             display_type = 'word_correction' if is_unconstrained else corr_type
 
+            # Is the destination a word worth rewriting INTO at all? This is
+            # a property of the candidate alone, independent of how it was
+            # reached, so it gates every mechanism -- grounded and
+            # unconstrained alike -- before any of the evidence tests below.
+            #
+            # The extended dictionary is 141,115 entries of which 70,778 have
+            # zero corpus attestation, and every one of those is somewhere for
+            # the edit search to land. Measured on tests/fixtures/eval, the
+            # only remaining broken word after the space-merge fix was
+            # ಪಾರಲೌಕಿಕರಿಗೆ -> ಪಾರಲೌಕಿಕದಿಗೆ, a ರ/ದ glyph swap into a form with
+            # frequency 0. See dictionary.is_correction_target.
+            cand_freq = corpus_frequency(top_cand)
+            if not is_correction_target(top_cand, cand_freq):
+                return word, 0.0, 'none'
+
             # If the original word has (almost) no real corpus attestation,
             # frequency dominance can't gate ANY mechanism -- not just the
             # unconstrained ones. A high-precision glyph-confusion
@@ -551,7 +566,6 @@ def suggest_kannada_word(word: str, prev_word: Optional[str] = None, next_word: 
             # its own rare-but-real word.
 
             if word_freq >= MIN_CORPUS_ATTESTATION:
-                cand_freq = corpus_frequency(top_cand)
                 if cand_freq < word_freq * FREQUENCY_DOMINANCE_RATIO:
                     return word, 0.0, 'none'
             return top_cand, dist, display_type
