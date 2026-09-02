@@ -31,7 +31,9 @@ from pipeline.ocr import (
     DEFAULT_OEM,
     SUPPORTED_LANGUAGES
 )
-from pipeline.correction import get_dictionary, get_word_list, ENGINES, ENGINE_RULE, engine_status
+from pipeline.correction import (
+    get_dictionary, get_word_list, ENGINES, ENGINE_RULE, engine_status, preload_engine
+)
 from pipeline.ingestion import SUPPORTED_IMAGE_EXTENSIONS, inspect_pdf, is_pdf_file
 
 app = Flask(__name__)
@@ -50,6 +52,52 @@ ALLOWED_EXTENSIONS = {'.pdf'} | SUPPORTED_IMAGE_EXTENSIONS
 # Session store for streaming jobs
 _SESSIONS = {}
 
+# Default correction engine for the dashboard. 'hybrid' rather than 'rule'
+# because it makes measurably fewer wrong corrections (6 vs 20 per 100
+# benchmark lines) at the same error rate, which is what this project's corpus
+# goal actually cares about. Viable as a default only because of the warmup
+# below -- without it, the first request of every session would stall ~20s
+# loading the model.
+DEFAULT_ENGINE = os.environ.get('PRAGNA_WEB_ENGINE', 'hybrid')
+
+# Warmup happens on a background thread so the server binds its port and serves
+# the page immediately; the UI polls this state and enables the LM engines when
+# it flips to 'ready'. If the model can't load (no torch, no GPU), the state
+# records why and the dashboard falls back to the rule engine rather than
+# offering something that will fail.
+_WARMUP = {'engine': DEFAULT_ENGINE, 'state': 'pending', 'error': '', 'seconds': 0.0}
+
+
+def _warm_engine():
+    """Load the dictionary, n-gram model and (if needed) the LM, once at boot."""
+    started = time.time()
+    _WARMUP['state'] = 'loading'
+    try:
+        init_pipeline()
+        preload_engine(DEFAULT_ENGINE)
+        _WARMUP['state'] = 'ready'
+    except Exception as e:
+        # Not fatal: the rule engine needs none of this, so the dashboard stays
+        # usable and simply reports the LM as unavailable.
+        _WARMUP['state'] = 'failed'
+        _WARMUP['error'] = str(e)
+        print(f"[warmup] {DEFAULT_ENGINE} engine unavailable: {e}")
+    finally:
+        _WARMUP['seconds'] = round(time.time() - started, 1)
+
+
+def start_warmup():
+    if DEFAULT_ENGINE == ENGINE_RULE:
+        _WARMUP.update({'state': 'ready', 'seconds': 0.0})
+        threading.Thread(target=init_pipeline, daemon=True).start()
+        return
+    threading.Thread(target=_warm_engine, daemon=True).start()
+
+
+def effective_default_engine() -> str:
+    """The engine the UI should preselect, degraded if warmup failed."""
+    return ENGINE_RULE if _WARMUP['state'] == 'failed' else DEFAULT_ENGINE
+
 
 def is_allowed_file(filename: str) -> bool:
     return os.path.splitext(filename.lower())[1] in ALLOWED_EXTENSIONS
@@ -57,6 +105,10 @@ def is_allowed_file(filename: str) -> bool:
 
 @app.before_request
 def setup_pipeline_on_start():
+    # Also covers being run under a WSGI server, where __main__ never executes
+    # and start_warmup() would otherwise never fire.
+    if _WARMUP['state'] == 'pending':
+        start_warmup()
     init_pipeline()
 
 
@@ -74,9 +126,9 @@ def requested_engine(value) -> str:
     unavailable* still raises, because silently correcting with a different
     engine than the user picked would misreport what produced the text.
     """
-    engine = (value or ENGINE_RULE).strip()
+    engine = (value or effective_default_engine()).strip()
     if engine not in ENGINES:
-        return ENGINE_RULE
+        return effective_default_engine()
     status = engine_status()[engine]
     if not status['available']:
         raise RuntimeError(f"The '{engine}' engine is unavailable. {status['reason']}")
@@ -96,7 +148,8 @@ def system_status():
         'dictionary_words_count': len(get_word_list()),
         'max_upload_size_mb': 250,
         'engines': engine_status(),
-        'default_engine': ENGINE_RULE
+        'default_engine': effective_default_engine(),
+        'warmup': dict(_WARMUP)
     })
 
 
@@ -364,4 +417,6 @@ def download_output(session_id: str, file_type: str):
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5010))
     print(f"Starting Kannada OCR & Autocorrect Web App on http://127.0.0.1:{port}")
+    print(f"Default correction engine: {DEFAULT_ENGINE} (warming in background)")
+    start_warmup()
     app.run(host='0.0.0.0', port=port, debug=False, threaded=True)

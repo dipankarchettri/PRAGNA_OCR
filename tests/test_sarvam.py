@@ -146,6 +146,51 @@ class TestContextWindow(unittest.TestCase):
         )
 
 
+class TestWebEngineSelection(unittest.TestCase):
+    """
+    The dashboard's engine plumbing. Worth covering because the default is now
+    an LM engine: if warmup fails on a machine without torch, the dashboard has
+    to degrade to the rule engine rather than offering something that 503s on
+    every request.
+    """
+
+    def setUp(self):
+        from web import app as webapp
+        self.webapp = webapp
+        self._warmup = dict(webapp._WARMUP)
+        self.addCleanup(lambda: webapp._WARMUP.update(self._warmup))
+
+    def test_default_is_hybrid_when_warm(self):
+        self.webapp._WARMUP.update({'state': 'ready', 'engine': 'hybrid'})
+        self.assertEqual(self.webapp.effective_default_engine(), 'hybrid')
+        self.assertEqual(self.webapp.requested_engine(None), 'hybrid')
+        self.assertEqual(self.webapp.requested_engine(''), 'hybrid')
+
+    def test_degrades_to_rule_when_warmup_failed(self):
+        self.webapp._WARMUP.update({'state': 'failed', 'error': 'no torch'})
+        self.assertEqual(self.webapp.effective_default_engine(), 'rule')
+        self.assertEqual(self.webapp.requested_engine(None), 'rule')
+
+    def test_unknown_engine_falls_back_rather_than_failing(self):
+        """A stale browser tab must not be able to kill a long OCR job."""
+        self.webapp._WARMUP.update({'state': 'ready', 'engine': 'hybrid'})
+        self.assertEqual(self.webapp.requested_engine('gpt-9'), 'hybrid')
+
+    def test_known_but_unavailable_engine_raises(self):
+        """
+        Silently substituting an engine would mislabel what produced the text,
+        which is worse for a training corpus than a visible error.
+        """
+        real = self.webapp.engine_status
+        self.webapp.engine_status = lambda: {
+            'hybrid': {'available': False, 'reason': 'torch missing'},
+            'rule': {'available': True, 'reason': ''},
+        }
+        self.addCleanup(setattr, self.webapp, 'engine_status', real)
+        with self.assertRaises(RuntimeError):
+            self.webapp.requested_engine('hybrid')
+
+
 class TestVllmBackend(unittest.TestCase):
     """
     Response parsing for the vLLM backend, checked without a server.

@@ -75,8 +75,8 @@
             <div class="engine-bar">
                 <label class="control-label" for="liveEngineSelect">Correction Engine</label>
                 <select id="liveEngineSelect" class="apple-select engine-select">
-                    <option value="rule" selected>Rule — dictionary + morphology + n-gram</option>
-                    <option value="hybrid">Hybrid — rule engine, verified by Sarvam-1</option>
+                    <option value="rule">Rule — dictionary + morphology + n-gram</option>
+                    <option value="hybrid" selected>Hybrid — rule engine, verified by Sarvam-1</option>
                     <option value="sarvam-rerank">Sarvam rerank — LM ranks the candidates</option>
                     <option value="sarvam-generate">Sarvam generate — LM rewrites lines (unverified)</option>
                 </select>
@@ -203,8 +203,8 @@
                         <div class="control-field">
                             <label class="control-label" for="docEngineSelect">Correction Engine</label>
                             <select id="docEngineSelect" class="apple-select">
-                                <option value="rule" selected>Rule — fastest, no LM</option>
-                                <option value="hybrid">Hybrid — fewest wrong corrections</option>
+                                <option value="rule">Rule — fastest, no LM</option>
+                                <option value="hybrid" selected>Hybrid — fewest wrong corrections</option>
                                 <option value="sarvam-rerank">Sarvam rerank — LM ranks candidates</option>
                                 <option value="sarvam-generate">Sarvam generate — LM rewrites (unverified)</option>
                             </select>

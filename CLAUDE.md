@@ -37,7 +37,7 @@ python setup.py
 ./venv/bin/python -m unittest tests.test_pipeline.TestKannadaPipeline.test_dynamic_ocr_repairs -v
 
 # Web dashboard
-./venv/bin/python web/app.py          # http://127.0.0.1:5000
+./venv/bin/python web/app.py          # http://127.0.0.1:5010 (PORT env overrides)
 
 # CLI: single file, direct text, batch folder
 python cli.py scan.pdf --lang kan --dpi 400 --output-dir ./results
@@ -50,7 +50,7 @@ python cli.py --batch ./scans/ --output-dir ./batch_results/
 ./venv/bin/python tools/ocr_bench.py page.jpg --psm 3,4,6 --upscale 0,1
 ./venv/bin/python tools/ocr_bench.py page.jpg --dump ./bench_out
 
-# Pick the correction engine (default: rule). See "Correction engines" below.
+# Pick the correction engine (CLI default: rule; web dashboard default: hybrid).
 python cli.py scan.pdf --engine hybrid
 python cli.py --text "..." --engine sarvam-rerank
 
@@ -234,7 +234,18 @@ improvement for this project's goal.
 
 Flask + SSE: uploads go through `_SESSIONS` for progress streaming back to the browser during long OCR jobs; `init_pipeline()` runs via `@app.before_request`. Frontend is `web/static/js/app.js` (live autocorrect + diff viewer) and `web/templates/index.html`.
 
-**Engine selection.** Both the live editor and the document pipeline carry a Correction
+**Engine selection.** The dashboard defaults to **`hybrid`**, not `rule` — it makes
+measurably fewer wrong corrections at the same error rate, which is what the corpus goal
+cares about. That is only viable because `start_warmup()` loads the dictionary, n-gram model
+and LM on a background thread at boot (`PRAGNA_WEB_ENGINE` overrides the default; set it to
+`rule` to skip the LM entirely). The server binds its port immediately and serves the page
+while the model loads — measured 43.8 s warmup, after which the first real correction takes
+0.58 s instead of stalling ~20 s. `/api/system-status` exposes `warmup`
+(`pending`/`loading`/`ready`/`failed`) and the frontend polls it so the hint text stops
+saying "loading" without a page reload. If warmup fails (no torch, no GPU) the state records
+why and `effective_default_engine()` degrades to `rule`, so the dashboard stays usable.
+
+Both the live editor and the document pipeline carry a Correction
 Engine dropdown; the choice rides along as `engine` on `/api/correct-text` (JSON),
 `/api/process-stream` (query param) and `/api/process-document` (form field).
 `/api/system-status` returns `engines` from `engine_status()`, and the frontend disables
@@ -245,9 +256,7 @@ for a known-but-unavailable one, since silently correcting with a different engi
 user picked would misreport what produced the text. Results report the engine the server
 actually used, read from the response rather than the dropdown.
 
-Two things the UI has to account for with an LM engine: the first request pays a ~20 s model
-load (the hint text says so, and clears once warm — measured 7.4 s cold, 0.10 s warm for a
-sentence), and the live editor's keystroke debounce stretches from 300 ms to 1200 ms, since
+The live editor's keystroke debounce stretches from 300 ms to 1200 ms with an LM engine, since
 a forward pass per uncertain word can't keep up with typing. `sarvam_lm` also holds an
 `_infer_lock` around forward passes: Flask runs threaded, and one CUDA model must not be
 entered concurrently.

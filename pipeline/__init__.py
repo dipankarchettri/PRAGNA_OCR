@@ -5,6 +5,7 @@ morphological post-processing, spelling correction, and structured export.
 """
 
 import os
+import threading
 import time
 from typing import Dict, Any, Optional, List
 from pathlib import Path
@@ -33,6 +34,11 @@ from .exporter import (
 )
 
 _INITIALIZED = False
+# init_pipeline is reentered from more than one thread now that the web app
+# warms the LM in the background while Flask still serves requests. The
+# _INITIALIZED flag alone would let two threads both start loading the
+# dictionary and training the n-gram model.
+_INIT_LOCK = threading.Lock()
 
 
 def _mean_ocr_confidence(layout_lines: List[Dict[str, Any]]) -> float:
@@ -84,22 +90,26 @@ def _ocr_with_adaptive_contrast(
 
 
 def init_pipeline(dic_path: Optional[str] = None):
-    """Initialize dictionary and n-gram models once."""
+    """Initialize dictionary and n-gram models once, across all threads."""
     global _INITIALIZED
     if _INITIALIZED:
         return
 
-    load_dictionary(dic_path)
+    with _INIT_LOCK:
+        if _INITIALIZED:
+            return
 
-    # Prefer a real-corpus-trained model (built via tools/build_ngram_model.py)
-    # if one has been cached; fall back to unigram-only dictionary counts so
-    # the pipeline still works with no extra setup.
-    if load_ngram_model():
-        add_vocabulary(get_word_list())
-    else:
-        train_from_word_list(get_word_list())
+        load_dictionary(dic_path)
 
-    _INITIALIZED = True
+        # Prefer a real-corpus-trained model (built via tools/build_ngram_model.py)
+        # if one has been cached; fall back to unigram-only dictionary counts so
+        # the pipeline still works with no extra setup.
+        if load_ngram_model():
+            add_vocabulary(get_word_list())
+        else:
+            train_from_word_list(get_word_list())
+
+        _INITIALIZED = True
 
 
 def process_text_input(text: str, engine: str = ENGINE_RULE) -> Dict[str, Any]:

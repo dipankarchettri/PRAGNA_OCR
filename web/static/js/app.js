@@ -23,6 +23,16 @@ const ENGINE_NOTES = {
 
 const LM_FIRST_CALL_NOTE = ' First run loads the model (~20s).';
 
+// Filled from /api/system-status. The server warms the default engine at boot
+// on a background thread, so by the time anyone types the model is usually
+// already resident -- the hint should say "loading" while that is happening,
+// not "first run will be slow" when it won't be.
+let WARMUP = { state: 'pending', engine: 'rule', error: '', seconds: 0 };
+
+function lmIsWarm(engine) {
+    return WARMUP.state === 'ready' && WARMUP.engine === engine;
+}
+
 // Engines that are known but not installed on this backend; filled in from
 // /api/system-status so a missing torch install disables the option with a
 // reason instead of failing at request time.
@@ -48,7 +58,11 @@ function updateEngineHint(selectEl, hintEl, opts) {
     let note = ENGINE_NOTES[engine] || '';
     let kind = '';
     if (engine !== 'rule') {
-        if (!options.warmed) note += LM_FIRST_CALL_NOTE;
+        if (WARMUP.state === 'loading' && WARMUP.engine === engine) {
+            note += ' Loading the model now — ready shortly.';
+        } else if (!options.warmed && !lmIsWarm(engine)) {
+            note += LM_FIRST_CALL_NOTE;
+        }
         if (options.perPage) note += ' Adds a scoring pass per uncertain word, per page.';
         kind = 'warn';
     }
@@ -57,7 +71,25 @@ function updateEngineHint(selectEl, hintEl, opts) {
 
 // Disables options the backend cannot run, so the UI never offers an engine
 // that would 503 on use.
-function applyEngineAvailability(engines) {
+// Re-checks warmup until the background load finishes, so the hint stops
+// saying "loading" without the user having to reload the page. Stops as soon
+// as the state settles; it is never a hot loop.
+function pollWarmupUntilReady() {
+    if (WARMUP.state !== 'pending' && WARMUP.state !== 'loading') return;
+    setTimeout(async () => {
+        try {
+            const resp = await fetch('/api/system-status');
+            const data = await resp.json();
+            WARMUP = data.warmup || WARMUP;
+            applyEngineAvailability(data.engines, data.default_engine);
+            pollWarmupUntilReady();
+        } catch (err) {
+            /* server not reachable; leave the last known state alone */
+        }
+    }, 2000);
+}
+
+function applyEngineAvailability(engines, defaultEngine) {
     ENGINE_AVAILABILITY = engines || {};
     ['liveEngineSelect', 'docEngineSelect'].forEach((id) => {
         const sel = document.getElementById(id);
@@ -69,7 +101,9 @@ function applyEngineAvailability(engines) {
             opt.textContent = opt.textContent.replace(/ \(unavailable\)$/, '');
             if (!ok) opt.textContent += ' (unavailable)';
         });
-        if (sel.selectedOptions[0] && sel.selectedOptions[0].disabled) sel.value = 'rule';
+        if (sel.selectedOptions[0] && sel.selectedOptions[0].disabled) {
+            sel.value = defaultEngine || 'rule';
+        }
     });
     updateEngineHint(document.getElementById('liveEngineSelect'),
                      document.getElementById('liveEngineHint'), { warmed: false });
@@ -729,7 +763,9 @@ async function initSystemStatus() {
         const resp = await fetch('/api/system-status');
         const data = await resp.json();
 
-        applyEngineAvailability(data.engines);
+        WARMUP = data.warmup || WARMUP;
+        applyEngineAvailability(data.engines, data.default_engine);
+        pollWarmupUntilReady();
 
         const badge = document.getElementById('headerStatusBadge');
         if (badge) {
