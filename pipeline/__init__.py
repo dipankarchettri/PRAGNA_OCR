@@ -22,8 +22,7 @@ from .ocr import (
 )
 from .correction import (
     load_dictionary, train_from_word_list, load_ngram_model, add_vocabulary,
-    get_word_list, correct_text_with, correct_layout_lines_with,
-    preload_engine, validate_engine, ENGINE_RULE
+    get_word_list, correct_text, correct_layout_lines
 )
 from .exporter import (
     generate_pdf_from_text,
@@ -34,10 +33,10 @@ from .exporter import (
 )
 
 _INITIALIZED = False
-# init_pipeline is reentered from more than one thread now that the web app
-# warms the LM in the background while Flask still serves requests. The
-# _INITIALIZED flag alone would let two threads both start loading the
-# dictionary and training the n-gram model.
+# init_pipeline is reentered from more than one thread: the web app warms the
+# dictionary and n-gram model on a background thread while Flask still serves
+# requests. The _INITIALIZED flag alone would let two threads both start
+# loading the dictionary and training the n-gram model.
 _INIT_LOCK = threading.Lock()
 
 
@@ -112,20 +111,11 @@ def init_pipeline(dic_path: Optional[str] = None):
         _INITIALIZED = True
 
 
-def process_text_input(text: str, engine: str = ENGINE_RULE) -> Dict[str, Any]:
-    """
-    Process raw text input directly through the cleaning and correction engine.
-
-    `engine` selects which corrector runs -- see pipeline/correction/engine.py.
-    The dictionary and n-gram model are loaded regardless: every engine,
-    including the Sarvam ones, uses the rule engine's candidate generation
-    and/or its deterministic script repairs.
-    """
-    validate_engine(engine)
+def process_text_input(text: str) -> Dict[str, Any]:
+    """Process raw text input directly through the cleaning and correction engine."""
     init_pipeline()
     start_t = time.time()
-    result = correct_text_with(text, engine=engine)
-    result['engine'] = engine
+    result = correct_text(text)
     result['latency_seconds'] = round(time.time() - start_t, 3)
     return result
 
@@ -141,8 +131,7 @@ def process_document(
     psm: int = DEFAULT_PSM,
     oem: int = DEFAULT_OEM,
     min_confidence: int = 0,
-    adaptive_contrast: bool = True,
-    engine: str = ENGINE_RULE
+    adaptive_contrast: bool = True
 ) -> Dict[str, Any]:
     """
     End-to-end processing pipeline for a PDF or image file:
@@ -150,16 +139,8 @@ def process_document(
     2. Extract / OCR
     3. Clean & Correct
     4. Export Results
-
-    `engine` selects the correction backend (see pipeline/correction/engine.py).
-    Only step 3 changes with it -- ingestion, OCR and export are identical, so
-    engine comparisons on the same input are comparing correction quality and
-    nothing else.
     """
-    validate_engine(engine)
     init_pipeline()
-    # Pay the model-load cost before page 1 rather than inside it.
-    preload_engine(engine)
     start_time = time.time()
     input_path = os.path.abspath(input_path)
 
@@ -209,7 +190,7 @@ def process_document(
             if progress_callback:
                 progress_callback({'stage': 'correcting', 'message': 'Applying morphological cleaning and Sandhi rules...', 'percent': 40})
 
-            corrected_lines, corrections = correct_layout_lines_with(layout_lines, engine=engine)
+            corrected_lines, corrections = correct_layout_lines(layout_lines)
             all_layout_lines.extend(corrected_lines)
             all_corrections.extend(corrections)
 
@@ -221,7 +202,7 @@ def process_document(
 
             for p in fully_digital_pages:
                 raw_page_text = '\n'.join(pages_map.get(p, []))
-                corr_res = correct_text_with(raw_page_text, engine=engine)
+                corr_res = correct_text(raw_page_text)
                 pages_by_num[p] = {
                     'page_num': p,
                     'raw_text': raw_page_text,
@@ -299,7 +280,7 @@ def process_document(
                 lines = digital_lines + ocr_lines
                 lines.sort(key=lambda l: (l['top'], l['left']))
 
-                corrected_lines, page_corrections = correct_layout_lines_with(lines, engine=engine)
+                corrected_lines, page_corrections = correct_layout_lines(lines)
                 all_layout_lines.extend(corrected_lines)
                 all_corrections.extend(page_corrections)
 
@@ -353,7 +334,7 @@ def process_document(
                 img, lang=lang, page_num=1,
                 psm=psm, oem=oem, min_confidence=min_confidence
             )
-        corrected_lines, page_corrections = correct_layout_lines_with(lines, engine=engine)
+        corrected_lines, page_corrections = correct_layout_lines(lines)
         all_layout_lines.extend(corrected_lines)
         all_corrections.extend(page_corrections)
 
@@ -407,7 +388,7 @@ def process_document(
         'total_pages': len(pages_result),
         'total_corrections': len(all_corrections),
         'language': lang,
-        'correction_engine': engine,
+        'correction_engine': 'rule',
         'output_directory': output_dir,
         'generated_files': {
             'text_files': txt_files,

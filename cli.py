@@ -27,7 +27,6 @@ from pipeline import (
 )
 from pipeline.ocr import is_tesseract_available, SUPPORTED_LANGUAGES, DEFAULT_PSM, DEFAULT_OEM
 from pipeline.ingestion import SUPPORTED_IMAGE_EXTENSIONS
-from pipeline.correction import ENGINES, ENGINE_RULE
 
 
 def print_banner():
@@ -49,7 +48,6 @@ def handle_single_file(args):
     print(f"    Language      : {args.lang}")
     print(f"    DPI           : {args.dpi}")
     print(f"    PSM / OEM     : {args.psm} / {args.oem}")
-    print(f"    Corrector     : {args.engine}")
     print(f"    Generate PDF  : {'Yes' if not args.no_pdf else 'No'}")
     print(f"    Save Images   : {'Yes' if args.save_images else 'No'}\n")
 
@@ -71,7 +69,6 @@ def handle_single_file(args):
             oem=args.oem,
             min_confidence=args.min_confidence,
             adaptive_contrast=not args.no_adaptive_contrast,
-            engine=args.engine,
             output_dir=args.output_dir,
             save_pdf=not args.no_pdf,
             save_images=args.save_images,
@@ -129,7 +126,6 @@ def handle_batch(args):
                 oem=args.oem,
                 min_confidence=args.min_confidence,
                 adaptive_contrast=not args.no_adaptive_contrast,
-                engine=args.engine,
                 output_dir=item_out,
                 save_pdf=not args.no_pdf,
                 save_images=args.save_images
@@ -142,8 +138,8 @@ def handle_batch(args):
 
 
 def handle_text(args):
-    print(f"[*] Correcting input text with the '{args.engine}' engine...\n")
-    res = process_text_input(args.text, engine=args.engine)
+    print("[*] Correcting input text...\n")
+    res = process_text_input(args.text)
 
     print("--- Original ---")
     print(res['original'])
@@ -183,13 +179,6 @@ Kannada page lets Tesseract emit Latin for ambiguous glyphs.
     parser.add_argument('--psm', type=int, default=DEFAULT_PSM, help=f'Tesseract page segmentation mode (default: {DEFAULT_PSM}; use 3 for mixed/multi-column layouts)')
     parser.add_argument('--oem', type=int, default=DEFAULT_OEM, help=f'Tesseract OCR engine mode (default: {DEFAULT_OEM} = LSTM only)')
     parser.add_argument('--min-confidence', type=int, default=0, help='Drop OCR words below this confidence (0-100, default: 0 = keep all)')
-    parser.add_argument('--engine', '-e', default=ENGINE_RULE, choices=list(ENGINES),
-                        help=f"Correction engine (default: {ENGINE_RULE}). The 'sarvam-*' and "
-                             "'hybrid' engines run the Sarvam-1 2B LM and need "
-                             "requirements-sarvam.txt installed.")
-    parser.add_argument('--sarvam-model', help="Checkpoint for the Sarvam engines: 'sarvam-1' "
-                        "(2B base, research licence) or 'sarvam-30b-fp8' (30B MoE instruct, "
-                        "Apache 2.0), a HF repo id, or a local path")
     parser.add_argument('--no-adaptive-contrast', action='store_true', help='Skip the extra contrast-boosted OCR pass (faster, but misses gains on faded scans)')
     parser.add_argument('--output-dir', '-o', help='Output directory for generated files')
     parser.add_argument('--no-pdf', action='store_true', help='Skip generating corrected PDF document')
@@ -198,10 +187,6 @@ Kannada page lets Tesseract emit Latin for ambiguous glyphs.
 
     args = parser.parse_args()
     print_banner()
-
-    if args.sarvam_model:
-        from pipeline.correction import sarvam_lm
-        sarvam_lm.set_model(args.sarvam_model)
 
     if args.text:
         handle_text(args)

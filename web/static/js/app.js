@@ -9,108 +9,6 @@ document.addEventListener('DOMContentLoaded', () => {
     initSystemStatus();
 });
 
-/* ── Correction Engine Helpers ── */
-
-// What each engine costs and risks, shown next to the selector so the choice
-// is informed rather than a bare dropdown. Numbers are from
-// tools/sarvam_bench.py over 100 synthetic-noise lines with sarvam-1.
-const ENGINE_NOTES = {
-    'rule': 'Dictionary + morphology + n-gram. No model to load.',
-    'hybrid': 'Rule engine proposes, Sarvam-1 vetoes. Fewest wrong corrections (6 vs 20 per 100 lines).',
-    'sarvam-rerank': 'Sarvam-1 ranks the rule engine\'s candidates. Cannot invent words.',
-    'sarvam-generate': 'Sarvam-1 rewrites whole lines. Can hallucinate — not recommended for corpus text.'
-};
-
-const LM_FIRST_CALL_NOTE = ' First run loads the model (~20s).';
-
-// Filled from /api/system-status. The server warms the default engine at boot
-// on a background thread, so by the time anyone types the model is usually
-// already resident -- the hint should say "loading" while that is happening,
-// not "first run will be slow" when it won't be.
-let WARMUP = { state: 'pending', engine: 'rule', error: '', seconds: 0 };
-
-function lmIsWarm(engine) {
-    return WARMUP.state === 'ready' && WARMUP.engine === engine;
-}
-
-// Engines that are known but not installed on this backend; filled in from
-// /api/system-status so a missing torch install disables the option with a
-// reason instead of failing at request time.
-let ENGINE_AVAILABILITY = {};
-
-function setHint(el, text, kind) {
-    if (!el) return;
-    el.textContent = text || '';
-    el.className = 'engine-hint' + (kind ? ' ' + kind : '');
-}
-
-function updateEngineHint(selectEl, hintEl, opts) {
-    if (!selectEl || !hintEl) return;
-    const engine = selectEl.value;
-    const status = ENGINE_AVAILABILITY[engine];
-    const options = opts || {};
-
-    if (status && !status.available) {
-        setHint(hintEl, status.reason, 'error');
-        return;
-    }
-
-    let note = ENGINE_NOTES[engine] || '';
-    let kind = '';
-    if (engine !== 'rule') {
-        if (WARMUP.state === 'loading' && WARMUP.engine === engine) {
-            note += ' Loading the model now — ready shortly.';
-        } else if (!options.warmed && !lmIsWarm(engine)) {
-            note += LM_FIRST_CALL_NOTE;
-        }
-        if (options.perPage) note += ' Adds a scoring pass per uncertain word, per page.';
-        kind = 'warn';
-    }
-    setHint(hintEl, note, kind);
-}
-
-// Disables options the backend cannot run, so the UI never offers an engine
-// that would 503 on use.
-// Re-checks warmup until the background load finishes, so the hint stops
-// saying "loading" without the user having to reload the page. Stops as soon
-// as the state settles; it is never a hot loop.
-function pollWarmupUntilReady() {
-    if (WARMUP.state !== 'pending' && WARMUP.state !== 'loading') return;
-    setTimeout(async () => {
-        try {
-            const resp = await fetch('/api/system-status');
-            const data = await resp.json();
-            WARMUP = data.warmup || WARMUP;
-            applyEngineAvailability(data.engines, data.default_engine);
-            pollWarmupUntilReady();
-        } catch (err) {
-            /* server not reachable; leave the last known state alone */
-        }
-    }, 2000);
-}
-
-function applyEngineAvailability(engines, defaultEngine) {
-    ENGINE_AVAILABILITY = engines || {};
-    ['liveEngineSelect', 'docEngineSelect'].forEach((id) => {
-        const sel = document.getElementById(id);
-        if (!sel) return;
-        Array.from(sel.options).forEach((opt) => {
-            const status = ENGINE_AVAILABILITY[opt.value];
-            const ok = !status || status.available;
-            opt.disabled = !ok;
-            opt.textContent = opt.textContent.replace(/ \(unavailable\)$/, '');
-            if (!ok) opt.textContent += ' (unavailable)';
-        });
-        if (sel.selectedOptions[0] && sel.selectedOptions[0].disabled) {
-            sel.value = defaultEngine || 'rule';
-        }
-    });
-    updateEngineHint(document.getElementById('liveEngineSelect'),
-                     document.getElementById('liveEngineHint'), { warmed: false });
-    updateEngineHint(document.getElementById('docEngineSelect'),
-                     document.getElementById('docEngineHint'), { warmed: false, perPage: true });
-}
-
 /* ── Top-Level Shared Utilities ── */
 
 function escapeHtml(str) {
@@ -222,33 +120,13 @@ function initLiveAutocorrect() {
     const tableBody = document.getElementById('liveCorrectionsTableBody');
     const copyBtn = document.getElementById('liveCopyBtn');
     const clearBtn = document.getElementById('liveClearBtn');
-    const engineSelect = document.getElementById('liveEngineSelect');
-    const engineHint = document.getElementById('liveEngineHint');
 
     let debounceTimer = null;
     let latestCorrectedText = '';
 
     // The rule engine answers in ~20ms, so re-correcting on every keystroke is
-    // free. An LM engine costs a forward pass per uncertain word (and a ~20s
-    // model load on the very first call), so typing at 300ms would queue
-    // requests faster than they complete. Back off instead of firing.
-    const DEBOUNCE_MS = { 'rule': 300 };
-    const LM_DEBOUNCE_MS = 1200;
-
-    function currentEngine() {
-        return engineSelect ? engineSelect.value : 'rule';
-    }
-
-    function debounceFor(engine) {
-        return DEBOUNCE_MS[engine] || LM_DEBOUNCE_MS;
-    }
-
-    if (engineSelect) {
-        engineSelect.addEventListener('change', () => {
-            updateEngineHint(engineSelect, engineHint, { warmed: false });
-            if ((rawInput.value || '').trim()) triggerCorrection();
-        });
-    }
+    // effectively free.
+    const DEBOUNCE_MS = 300;
 
     const sampleText = "ಶಿಕ್ಷಣವು ಪ್ರತಿಯೊಬ್ಬ ವ್ಯಕ್ತಿಯ ಜಿವನದಲ್ಲಿ ಪ್ರಮುಖ ಪಾತ್ರ ವಹಿಸುತದೆ. ಇದು ಸಮಾಜದ ಶಿಕಷಣ ಅಭಿವೃದ್ಧಿಗೆ ಕಾರಣವಾಗುತದೆ.";
 
@@ -265,7 +143,7 @@ function initLiveAutocorrect() {
     if (rawInput) {
         rawInput.addEventListener('input', () => {
             clearTimeout(debounceTimer);
-            debounceTimer = setTimeout(triggerCorrection, debounceFor(currentEngine()));
+            debounceTimer = setTimeout(triggerCorrection, DEBOUNCE_MS);
         });
     }
 
@@ -282,30 +160,21 @@ function initLiveAutocorrect() {
             return;
         }
 
-        const engine = currentEngine();
-        if (engine !== 'rule') {
-            setHint(engineHint, ENGINE_NOTES[engine] + ' Working…', 'warn');
-        }
-
         try {
             const resp = await fetch('/api/correct-text', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text, engine })
+                body: JSON.stringify({ text })
             });
             const data = await resp.json();
 
             if (resp.ok) {
                 renderLiveResults(data);
-                // The model is resident after the first call, so stop warning
-                // about the load cost.
-                updateEngineHint(engineSelect, engineHint, { warmed: engine !== 'rule' });
             } else {
-                setHint(engineHint, data.error || 'Correction failed.', 'error');
+                console.error("Autocorrect error:", data.error || 'Correction failed.');
             }
         } catch (err) {
             console.error("Autocorrect error:", err);
-            setHint(engineHint, 'Could not reach the correction service.', 'error');
         }
     }
 
@@ -367,13 +236,7 @@ function initDocumentUpload() {
 
     const langSelect = document.getElementById('docLangSelect') || document.getElementById('ocrLangSelect');
     const dpiSelect = document.getElementById('docDpiSelect') || document.getElementById('dpiSelect');
-    const engineSelect = document.getElementById('docEngineSelect');
-    const engineHint = document.getElementById('docEngineHint');
 
-    if (engineSelect) {
-        engineSelect.addEventListener('change', () =>
-            updateEngineHint(engineSelect, engineHint, { warmed: false, perPage: true }));
-    }
     const processBtn = document.getElementById('docProcessBtn') || document.getElementById('btnProcessDoc');
     
     const progressCard = document.getElementById('docProgressCard');
@@ -389,7 +252,6 @@ function initDocumentUpload() {
     const docStatPages = document.getElementById('docStatPages');
     const docStatFixes = document.getElementById('docStatFixes');
     const docStatTime = document.getElementById('docStatTime');
-    const docStatEngine = document.getElementById('docStatEngine');
 
     const btnCopyDocText = document.getElementById('btnCopyDocText');
     const btnDownloadPdf = document.getElementById('btnDownloadPdf');
@@ -619,10 +481,9 @@ function initDocumentUpload() {
         }
 
         let streamReceivedAny = false;
-        const engine = engineSelect ? engineSelect.value : 'rule';
         activeEventSource = new EventSource(
             `/api/process-stream/${sessionId}?lang=${encodeURIComponent(lang)}` +
-            `&dpi=${encodeURIComponent(dpi)}&engine=${encodeURIComponent(engine)}`
+            `&dpi=${encodeURIComponent(dpi)}`
         );
 
         activeEventSource.onmessage = (e) => {
@@ -713,14 +574,6 @@ function initDocumentUpload() {
         if (docStatPages) docStatPages.textContent = data.total_pages ?? (data.result ? data.result.total_pages : 0);
         if (docStatFixes) docStatFixes.textContent = data.total_corrections ?? (data.result ? data.result.total_corrections : 0);
         if (docStatTime) docStatTime.textContent = `${data.latency_seconds || 0}s`;
-        // Which engine actually produced this text -- reported by the server,
-        // not read back off the dropdown, so the record stays true if the
-        // request fell back.
-        if (docStatEngine) {
-            docStatEngine.textContent =
-                data.engine || (data.result && data.result.correction_engine) || 'rule';
-        }
-
         if (docRawDisplay) docRawDisplay.textContent = data.raw_text || '(No text extracted)';
 
         // 3-color Highlight (Blue = OCR repair, Green = Word correction, Yellow = Both)
@@ -762,10 +615,6 @@ async function initSystemStatus() {
     try {
         const resp = await fetch('/api/system-status');
         const data = await resp.json();
-
-        WARMUP = data.warmup || WARMUP;
-        applyEngineAvailability(data.engines, data.default_engine);
-        pollWarmupUntilReady();
 
         const badge = document.getElementById('headerStatusBadge');
         if (badge) {
