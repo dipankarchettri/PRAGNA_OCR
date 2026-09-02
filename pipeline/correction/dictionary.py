@@ -2,23 +2,35 @@
 Kannada Dictionary Loader
 
 Loads Hunspell kn_IN.dic + kn_IN.aff rules and maintains two distinct
-vocabularies, which is the important thing about this module:
+vocabularies. The split is the important thing about this module:
 
-  membership set  -- every entry plus its affix expansions. A word in here is
-                     never flagged as an error. Answers "is this real Kannada?"
-  target set      -- only entries with real corpus attestation and enough
-                     length to be worth proposing. Answers "may the corrector
-                     rewrite some other word INTO this one?"
+  membership set  -- every entry plus its affix expansions, 622,407 forms.
+                     A word in here is never flagged as an error. Answers
+                     "is this real Kannada?"
+  target set      -- the subset that is also attested in real corpus text,
+                     247,556 forms. Answers "may the corrector rewrite some
+                     other word INTO this one?"
 
-The split exists because the extended dictionary is 141,115 entries but
-**70,778 of them have a corpus frequency of zero** and 522 are two code points
-or fewer (ಅಕ, ಅಘ, ಖಸ...). Every one of those is a target the weighted-edit
-search can snap a perfectly good word onto. Dropping them outright would be
-worse -- a rare real word would then be flagged as an error and "corrected"
-into a common one -- so they stay valid, they just stop being destinations.
+The asymmetry is deliberate and the two errors are not symmetric. A real word
+missing from *membership* gets flagged and "corrected" into something else --
+silent corpus corruption. A junk string admitted as a *target* is somewhere the
+edit-distance search can land, which is the same corruption from the other
+direction. So membership is made as large as the evidence allows, and
+targethood is gated on corpus attestation on top of it.
 
-Frequencies come from data/kn_freq.tsv (`word[/flags]<TAB>count`), built from
-the same corpus as the n-gram model.
+Membership is data/kn_IN.dic (589,521 entries; see CLAUDE.md for where it comes
+from and why it is not in git). Attestation comes from the n-gram model's
+unigram counts, which cover ~12.8M surface forms -- far more than any curated
+word list, and the reason a separate frequency table is no longer kept here.
+
+A note on sizing, since the obvious instinct is "bigger is better". A 2.5M-entry
+build of this dictionary was measured too, and was worse: harvested from corpus
+text that itself contains OCR output, it admitted OCR errors as entries (ಕಾಥಿ,
+the misreading of ಕಾಫಿ, was a listed word at frequency 37), and membership means
+"never flag this" -- so the dictionary taught the corrector that the error was
+correct. Head to head at identical settings, 2.5M scored precision 0.667 with
+162 broken words against 589k's 0.708 with 121, on identical real-page results.
+Vocabulary quality dominates vocabulary size here.
 """
 
 import os
@@ -29,41 +41,45 @@ KANNADA_CHARS_RE = re.compile(r'^[ಀ-೿‌‍]+$')
 
 # Minimum corpus attestation for a word to be offered as a correction target.
 #
-# Swept over 300 synthetic-noise lines (uncorrected CER 0.0155 / WER 0.1710).
-# `minlen` is MIN_TARGET_LENGTH; (0, 0) is the old ungated behaviour:
+# Re-swept against the 622k membership set; the old value was tuned when
+# membership was 182k and does not transfer. Measured on 24 clean pages, 24
+# degraded pages and 300 synthetic lines:
 #
-#   minfreq  minlen      CER      WER   fixed  broke   precision
-#         0       0   0.0089   0.0901     195    155       0.557
-#         0       3   0.0089   0.0900     194    153       0.559
-#         2       3   0.0088   0.0895     193    148       0.566   <- chosen
-#         5       3   0.0089   0.0900     190    147       0.564
-#        20       3   0.0088   0.0898     187    143       0.567
-#       100       3   0.0089   0.0909     180    142       0.559
-#         5       4   0.0089   0.0901     187    144       0.565
+#   minfreq   targets    clean(fix/brk)  degr(fix/brk)   synth CER  fix/brk  prec
+#         2   247,556           5 / 0          3 / 0        0.0094  293/121  0.708
+#         5   194,715           5 / 0          3 / 0        0.0096  284/120  0.703
+#        10   163,046           5 / 0          3 / 0        0.0095  280/118  0.704
 #
-# The curve is flat -- be honest about the size of this: it buys ~7 fewer
-# broken words per 300 lines, not a step change. 2 is the best point on CER,
-# WER and retained fixes simultaneously, and tightening further trades away
-# more real fixes than it prevents breaks (at 100 both CER and precision get
-# worse again).
+# Tightening buys nothing: the real-page results are identical and every
+# synthetic column is flat-to-worse. This is the opposite of the intuition that
+# a smaller target set buys precision -- it does not, because the
+# bigram-support and frequency-dominance gates in corrector.py already do that
+# filtering, and the frequency floor only subtracts real fixes on top. The same
+# sweep run against a 2.5M membership was monotone in the same direction, so
+# the finding is not an artefact of this particular vocabulary.
 #
-# 2 is also the same boundary MIN_CORPUS_ATTESTATION uses, for the same
-# reason: ngram.add_vocabulary() pads every known dictionary word to a count
-# of exactly 1, so ">= 2" is precisely "attested in real corpus text rather
-# than merely present in the word list".
+# 2 is the meaningful floor rather than 0 or 1 because ngram.add_vocabulary()
+# pads every known dictionary word to a count of exactly 1, so ">= 2" is
+# precisely "attested in real corpus text rather than merely present in the
+# word list". Measured: 0 costs a broken word on both page sets.
 MIN_TARGET_FREQUENCY = 2
 
-# Minimum length, in code points, for a correction target. Frequency alone
-# cannot gate this: the single letter ರ has a corpus frequency of 1,064,175
-# (corpus tokenization artifacts, not real one-letter words), which would make
-# it one of the most attractive targets in the entire vocabulary. 4 was also
-# measured and is slightly worse on every column than 3.
-MIN_TARGET_LENGTH = 3
+# Minimum length, in code points, for a correction target.
+#
+# 2, not 3. The reason this exists at all is that frequency cannot exclude
+# single letters -- ರ alone has a corpus frequency of 1,064,175, from corpus
+# tokenization artifacts rather than real one-letter words, which would make it
+# one of the most attractive targets in the whole vocabulary. A floor of 2
+# already excludes every such single letter.
+#
+# 3 was the previous value and is measurably worse: it costs a genuine fix on
+# BOTH real-OCR page sets (clean 5->4, degraded 3->2) and nine on synthetic
+# (293->284), while preventing no breaks at all. The extra caution was buying
+# nothing.
+MIN_TARGET_LENGTH = 2
 
 _dictionary: Set[str] = set()
 _word_list: List[str] = []
-_frequencies: Dict[str, int] = {}
-_targets: Set[str] = set()
 
 
 def is_kannada_word(word: str) -> bool:
@@ -142,55 +158,14 @@ def load_and_expand_dic(dic_path: str, aff_path: Optional[str] = None) -> Set[st
     return expanded_words
 
 
-def load_frequencies(freq_path: Optional[str] = None) -> Dict[str, int]:
-    """
-    Load `word[/flags]<TAB>count` into the frequency table and derive the
-    correction-target set from it.
-
-    Missing file is not an error: the table stays empty, corpus_frequency()
-    falls back to the n-gram unigram counts, and every dictionary word remains
-    a valid target -- i.e. exactly the old behaviour.
-    """
-    global _frequencies, _targets
-
-    if freq_path is None:
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        freq_path = os.path.join(base_dir, 'data', 'kn_freq.tsv')
-
-    frequencies: Dict[str, int] = {}
-    if os.path.exists(freq_path):
-        with open(freq_path, 'r', encoding='utf-8', errors='ignore') as f:
-            for line in f:
-                word, _, count = line.partition('\t')
-                if not count:
-                    continue
-                # Entries carry the same /FLAGS suffix as the .dic.
-                word = word.split('/')[0].strip()
-                if not word:
-                    continue
-                try:
-                    frequencies[word] = int(count.strip())
-                except ValueError:
-                    continue
-
-    _frequencies = frequencies
-    _targets = {
-        w for w, c in frequencies.items()
-        if c >= MIN_TARGET_FREQUENCY and len(w) >= MIN_TARGET_LENGTH
-    }
-    return frequencies
-
-
 def load_dictionary(dic_path: Optional[str] = None) -> Set[str]:
-    """Load the default dictionary, affix rules and frequency table."""
+    """Load the default dictionary and its affix rules."""
     if dic_path is None:
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         dic_path = os.path.join(base_dir, 'data', 'kn_IN.dic')
 
     aff_path = os.path.join(os.path.dirname(dic_path), 'kn_IN.aff')
-    words = load_and_expand_dic(dic_path, aff_path)
-    load_frequencies()
-    return words
+    return load_and_expand_dic(dic_path, aff_path)
 
 
 def get_dictionary() -> Set[str]:
@@ -201,27 +176,15 @@ def get_word_list() -> List[str]:
     return _word_list
 
 
-def get_frequencies() -> Dict[str, int]:
-    return _frequencies
-
-
-def dictionary_frequency(word: str) -> int:
-    """Corpus frequency from the curated table. 0 if unknown."""
-    return _frequencies.get(word, 0)
-
-
-def has_frequency_table() -> bool:
-    return bool(_frequencies)
-
-
 def is_correction_target(word: str, frequency: int) -> bool:
     """
     May the corrector rewrite some other word INTO this one?
 
-    `frequency` is supplied by the caller rather than read from the curated
-    table here, because the caller has a strictly better source. The n-gram
-    model carries ~12.8M surface forms against this table's 141k, and the gap
-    is exactly the inflected forms that matter:
+    `frequency` is supplied by the caller rather than read from a table here,
+    because the caller has a strictly better source. There used to be a curated
+    frequency file (data/kn_freq.tsv, 141k words); the n-gram model carries
+    ~12.8M surface forms, and the gap is exactly the inflected forms that
+    matter:
 
         word          curated    n-gram
         ವಹಿಸುತ್ತದೆ           0    14,647
@@ -230,20 +193,18 @@ def is_correction_target(word: str, frequency: int) -> bool:
     Gating on the curated count alone would have blocked both -- and both are
     corrections this pipeline is required to make. Pass corpus_frequency().
 
+    Callers must skip this gate entirely when ngram.has_corpus_counts() is
+    False: with no real corpus loaded every word sits at the padded count of 1,
+    and a ">= 2" floor would reject the whole vocabulary rather than loosen.
+
     Two independent conditions, because neither covers the other:
 
-      attestation  keeps the 70,778 zero-frequency dictionary entries from
-                   acting as edit-distance attractors. Measured: the break
-                   ಪಾರಲೌಕಿಕರಿಗೆ -> ಪಾರಲೌಕಿಕದಿಗೆ found on tests/fixtures/eval
-                   goes away here, because the target has frequency 0.
+      attestation  keeps unattested dictionary entries from acting as
+                   edit-distance attractors. Of the 622,407 membership forms
+                   only 247,556 clear it.
       length       frequency cannot catch this one. The single letter ರ has
                    corpus frequency 1,064,175 (tokenization artifacts, not
                    real one-letter words), which would otherwise make it one
                    of the most attractive targets in the whole vocabulary.
-
-    With no frequency table loaded at all, every word is allowed, preserving
-    the original behaviour.
     """
-    if not _frequencies:
-        return True
     return len(word) >= MIN_TARGET_LENGTH and frequency >= MIN_TARGET_FREQUENCY

@@ -341,6 +341,20 @@ def has_bigram_support(candidate: str, prev_word: Optional[str] = None, next_wor
     return False
 
 
+def has_corpus_counts() -> bool:
+    """
+    Whether the loaded unigram counts carry real frequency information.
+
+    init_pipeline falls back to train_from_word_list() when no corpus model is
+    cached, and add_vocabulary() pads every known dictionary word to a count of
+    exactly 1. In that state every word looks equally (un)common, so any gate
+    of the form "frequency >= 2" would reject the entire vocabulary and switch
+    correction off completely rather than merely loosening it. Callers use this
+    to skip frequency-based gating when there is no frequency to speak of.
+    """
+    return _model._max_unigram > 1
+
+
 def corpus_frequency(word: str) -> int:
     """
     Raw unigram count for `word` in the trained corpus. Distinct from

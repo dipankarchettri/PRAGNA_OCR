@@ -120,7 +120,17 @@ Stages run in this fixed order (see `corrector.py`):
 3. `morphology.py` — Sandhi/agglutinative suffix stripping via **longest-match-first** against the Hunspell affix rules; `join_root_suffix()` must stay in sync with any suffix list changes here.
 4. `edit_distance.py` — weighted Levenshtein with a Kannada optical-glyph confusion matrix (visually similar glyph pairs get lower substitution cost so they outrank generic dictionary stems) plus universal single-character insertion/deletion candidate generation.
 5. `ngram.py` — unigram/bigram frequency scoring to rank among surviving candidates. `init_pipeline()` loads a cached real-corpus model from `data/ngram_model.pkl.gz` (gzip+pickle — ~2x faster to load than gzip+JSON at this scale) if present (built via `tools/build_ngram_model.py` from AI4Bharat IndicCorpV2), falling back to unigram-only counts from the dictionary word list if that cache doesn't exist. `score_candidate()` always returns a bounded `[0.0, 0.3]` bonus regardless of which one is loaded, so `corrector.py` never needs corpus-size-dependent tuning.
-6. `dictionary.py` — loads `data/kn_IN.dic` + `data/kn_IN.aff` as the vocabulary source of truth. The `.dic` is the extended 141,115-entry list (the stock Hunspell `kn_IN` was 19,645; `data/kn_IN.dic.bak` keeps it); suffix-rule expansion brings the in-memory set to 182,294 forms.
+6. `dictionary.py` — loads `data/kn_IN.dic` + `data/kn_IN.aff` and maintains **two** vocabularies, which is the thing to understand about this module:
+   - **membership** — all 589,521 entries plus affix expansion, **622,407 forms**. A word here is never flagged as an error.
+   - **targets** — the subset also attested in the n-gram corpus, **247,556 forms**. Only these may be *proposed* as corrections.
+
+   The errors are not symmetric, hence the split: a real word missing from membership gets "corrected" into something else (silent corpus corruption), while a junk string admitted as a target is somewhere the edit search can land.
+
+   **`data/kn_IN.dic` is gitignored** (19 MB) — source of record is `extended_data/kn_IN3.dic`, copied into place. The `.aff` rules are committed. The stock Hunspell `kn_IN` was 19,645 entries.
+
+   **Bigger is not better here.** A 2.5M-entry build was measured and rejected: harvested from corpus text containing OCR output, it admitted OCR errors as entries (`ಕಾಥಿ`, the misreading of `ಕಾಫಿ`, was listed at frequency 37) — and since membership means "never flag this", the dictionary taught the corrector that the error was correct. At identical settings: 2.5M scored precision 0.667 / 162 broken, 589k scored **0.708 / 121**, on identical real-page results.
+
+   `VALID_WORD_TRUST_FREQUENCY` (corrector.py) exists for the residue of the same problem: dictionary membership only short-circuits correction for words attested ≥5,000 times. Below that a "valid" word still goes through candidate generation and is defended by `FREQUENCY_DOMINANCE_RATIO` instead — which is the check built to separate "rare but real" (ಮಂಡಲಿಗೆ, 82× behind its variant, kept) from "an error swamped by its own correct form" (ಕಾಥಿ, 2,442× behind ಕಾಫಿ, corrected).
 
 `corrector.py` (`suggest_kannada_word`, `correct_text`, `correct_layout_lines`) combines all of the above and classifies each fix as `ocr_repair` (blue), `word_correction` (green), or `hybrid` (yellow) — this classification drives the diff coloring in the web UI.
 

@@ -73,3 +73,9 @@ data/kanaja_docx_raw/
 tests/fixtures/eval/*.png
 tests/fixtures/eval/*_d[123].txt
 tests/fixtures/eval/*_d[123].para.txt
+
+# Extended Kannada dictionary (data/kn_IN.dic) -- 589,521 entries / 19MB, too
+# large to keep in git history and regenerated rather than edited. Source of
+# record is extended_data/kn_IN3.dic; see CLAUDE.md. The .aff rules ARE
+# committed, since they are small, hand-maintained and load-bearing.
+data/kn_IN.dic

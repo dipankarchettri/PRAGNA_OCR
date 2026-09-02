@@ -19,7 +19,10 @@ from .morphology import (
     BROKEN_SUFFIXES
 )
 from .ocr_repairs import normalize_script, clean_unicode_glitches
-from .ngram import train_from_word_list, score_candidate, corpus_frequency, has_bigram_support
+from .ngram import (
+    train_from_word_list, score_candidate, corpus_frequency, has_bigram_support,
+    has_corpus_counts,
+)
 
 # Minimum real-corpus attestation count for a word absent from the curated
 # dictionary to be treated as potentially "already correct" at all (see
@@ -30,6 +33,46 @@ from .ngram import train_from_word_list, score_candidate, corpus_frequency, has_
 # exactly 1 for known dictionary words, requiring genuine repeated real-text
 # attestation rather than a single coincidental corpus occurrence.
 MIN_CORPUS_ATTESTATION = 2
+
+# Corpus attestation at which mere dictionary membership is trusted to end the
+# matter, short-circuiting candidate generation for a word entirely.
+#
+# A word can be "valid" without being right. is_valid_surface_word accepts
+# anything morphology can decompose against a 622k-form dictionary, and OCR
+# errors decompose readily -- ಜಿವನದಲ್ಲಿ, the misreading of ಜೀವನದಲ್ಲಿ, passes at
+# corpus frequency 63 against the correct form's 112,670, and the test suite
+# requires the pipeline to fix it. With membership alone as the gate it
+# short-circuits before any candidate is generated and becomes uncorrectable by
+# construction.
+#
+# (This was starker still on a 2.5M build of the dictionary, where ಕಾಥಿ -- the
+# misreading of ಕಾಫಿ -- was a *listed entry* at frequency 37. That vocabulary
+# was rejected for this reason among others; see dictionary.py.)
+#
+# Below this floor, a dictionary word still goes through candidate generation
+# and is then protected by FREQUENCY_DOMINANCE_RATIO, which is precisely the
+# check built to separate "rare but real" from "an error swamped by its own
+# correct form": ಮಂಡಲಿಗೆ (freq 216) survives at 82x behind ಮಂಡಳಿಗೆ, while ಕಾಥಿ
+# at 2,442x behind ಕಾಫಿ does not. So this does not weaken protection of rare
+# real words; it hands them to the check designed for them.
+#
+# Swept over all three benches (24 clean pages / 24 degraded / 300 synthetic
+# lines). Breaks stay at ZERO on both real-OCR page sets across the whole
+# range, so this buys recall without paying precision:
+#
+#     VWT     clean(fix/brk)  degr(fix/brk)   synth CER  fix/brk  prec  secs
+#       0          4 / 0          2 / 0          0.0098  237/107  0.689  1.2
+#    1000          4 / 0          2 / 0          0.0093  291/120  0.708  2.1
+#    5000          5 / 0          3 / 0          0.0094  293/121  0.708  2.5
+#   20000          5 / 0          3 / 0          0.0093  295/121  0.709  3.0
+#  100000          5 / 0          3 / 0          0.0093  295/121  0.709  3.5
+#
+# 5000 takes all of the real-page gain -- 8 genuine fixes across the two page
+# sets against 6 at VWT=0 -- at the cheapest point that reaches it; past here
+# the only movement is two more synthetic fixes for 40% more time. The cost is
+# real: every word below the floor now runs candidate generation, roughly
+# doubling correction time, which the Phase 3a speedup paid for in advance.
+VALID_WORD_TRUST_FREQUENCY = 5000
 
 # How many times more corpus-attested a correction candidate must be than
 # the original word before suggest_kannada_word will actually apply it, once
@@ -73,6 +116,29 @@ MIN_CANDIDATE_ATTESTATION_FOR_UNSEEN_ORIGINAL = 100
 # guessing at what the word means, just trusting that Tesseract was
 # actually confident about what it read.
 HIGH_OCR_CONFIDENCE_TRUST = 85
+
+# Corpus attestation at which a word is treated as able to stand on its own,
+# for the purpose of deciding whether the space before it is real (see
+# heal_split_tokens).
+#
+# This deliberately does NOT use is_valid_surface_word. That routine accepts a
+# word if morphology can decompose it against the dictionary, and a genuine
+# OCR fragment decomposes very easily -- "ಲೆಯಲ್ಲಿ" is ಲೆ + ಯಲ್ಲಿ and
+# "ವಾಗಬೇಕಿದೆ" splits just as neatly -- so as the dictionary grew past half a
+# million forms the fragments started passing the very check that exists to
+# identify them, and genuine splits stopped being healed.
+#
+# Literal membership plus attestation separates them cleanly. Measured:
+#
+#     stands alone (must not merge)   ಅವರು 3,874,677   ಅವರ 2,404,297   both listed
+#     fragment     (must merge)       ಲೆಯಲ್ಲಿ    143   ವಾಗಬೇಕಿದೆ  131   neither listed
+#
+# 300 sits above the fragments and below ಪರಿಚಯವು (634), a real inflected form
+# absent from the .dic that must keep its own word boundary. The asymmetry is
+# intentional: a wrongly merged pair reads as one plausible token and is
+# effectively undetectable downstream, whereas an unhealed split stays visibly
+# broken, so ambiguity resolves toward leaving the space alone.
+HEAL_STANDALONE_FREQUENCY = 300
 
 # Strict protected tokens that should never be altered or fused
 PROTECTED_TOKENS = {
@@ -176,8 +242,12 @@ def heal_split_tokens(tokens: List[Dict[str, Any]], dictionary: Set[str]) -> Tup
             # "ಸ್ಪರ್ಶಿಸಿ ಅವರ" because Case B only looked at w1. Across 24 clean
             # pages this class of merge broke 50 words against 2 genuine fixes;
             # gating all three cases on it cut that to 10.
+            w2_stands_alone = (
+                w2 in dictionary
+                or corpus_frequency(w2) >= HEAL_STANDALONE_FREQUENCY
+            )
             if (w1 not in PROTECTED_TOKENS and w2 not in PROTECTED_TOKENS
-                    and not is_valid_surface_word(w2, dictionary)):
+                    and not w2_stands_alone):
                 joined = w1 + w2
                 should_join = False
 
@@ -328,9 +398,16 @@ def collect_kannada_candidates(
     lookups for scoring. Measured over the eval fixtures, 62.7% of calls are
     for a word already seen, so the split is what makes caching possible.
     """
-    # 1. Exact / Valid surface form check
+    # 1. Exact / Valid surface form check.
+    #
+    # Validity alone is not enough to stop here any more -- see
+    # VALID_WORD_TRUST_FREQUENCY. A weakly-attested dictionary word carries on
+    # into candidate generation and is defended by the frequency-dominance
+    # check instead, because at 2.5M entries the dictionary contains OCR errors
+    # and they would otherwise be uncorrectable by construction.
     if is_valid_surface_word(word, dictionary):
-        return None
+        if not has_corpus_counts() or corpus_frequency(word) >= VALID_WORD_TRUST_FREQUENCY:
+            return None
 
     candidates: List[Tuple[str, float, str]] = []
 
@@ -621,7 +698,11 @@ def suggest_kannada_word(word: str, prev_word: Optional[str] = None, next_word: 
             # ಪಾರಲೌಕಿಕರಿಗೆ -> ಪಾರಲೌಕಿಕದಿಗೆ, a ರ/ದ glyph swap into a form with
             # frequency 0. See dictionary.is_correction_target.
             cand_freq = corpus_frequency(top_cand)
-            if not is_correction_target(top_cand, cand_freq):
+            # Skipped outright when no real corpus model is loaded: without one
+            # every word carries add_vocabulary's padded count of 1, so a
+            # frequency floor would reject the entire vocabulary and disable
+            # correction rather than merely tightening it.
+            if has_corpus_counts() and not is_correction_target(top_cand, cand_freq):
                 return word, 0.0, 'none'
 
             # If the original word has (almost) no real corpus attestation,
