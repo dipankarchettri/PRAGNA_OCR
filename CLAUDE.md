@@ -108,11 +108,12 @@ the uncontrolled table and are not.
 
 **Where the remaining error actually is.** Of 128 single-word substitution errors across the
 nine real pages, the correct word is in the generated candidate set for only **16 (12.5%)**
-— and of those, **zero** are then discarded by the corpus-frequency target gate. The engine's
-ceiling is candidate-generation *recall*, not its gates or its ranking. Of the 112 it never
+— and of those, **zero** are then discarded by the corpus-frequency target gate. At the time
+this was measured the engine's ceiling was candidate-generation *recall*, not its gates or its
+ranking. **That is no longer true** — see "It is the gates now" below. Of the 112 it never
 proposes, 75 are 1 akshara away and 37 are 2 or more, so widening the search radius is not
-sufficient either: the 1-akshara misses are glyph pairs absent from `GLYPH_CONFUSIONS`
-(ಮ/ಥ inside a conjunct) and proper nouns absent from the dictionary.
+sufficient either: the 1-akshara misses were glyph pairs absent from `GLYPH_CONFUSIONS`
+(ಮ/ಥ inside a conjunct — since added, see 2d) and proper nouns absent from the dictionary.
 
 **The error budget, on the corrected output.** Across 10,439 reference characters on the nine
 real pages, what is left is no longer mostly single-word:
@@ -135,6 +136,42 @@ more tuning.
 are one confusion substitution away (ranking/gating losses, not table gaps), **3** are two away,
 and 52 are not reachable by confusion substitutions at any depth. A constrained
 two-substitution pass would chase three errors.
+
+**It is the gates now, not recall and not ranking.** The 12.5% figure above was measured before
+three rounds of recall work and no longer describes the binding constraint. Of the 27 residual
+errors whose truth is in the candidate set today: 8 are already corrected, **14 have the truth
+ranked #1 and a gate rejects it**, and only 5 are genuinely out-ranked. Phase 3d (ranking and
+tie-breaks) is therefore worth 5 errors at most — do it for tidiness, not for accuracy.
+
+The gate doing the rejecting is `FREQUENCY_DOMINANCE_RATIO` (250). Nine of the 14 fail it
+outright, e.g. ಪೋಲೀಸರ → ಪೊಲೀಸರ at 39×, ನಡೆಯುತ್ತಾನೆ → ಪಡೆಯುತ್ತಾನೆ at 14×, ಜಪದಕಟ್ಟಿ → ಜಪದಕಟ್ಟೆ at
+5×. The rest fall to the correction-target gate (candidate frequency < 2) or the bigram-support
+requirement on unconstrained mechanisms.
+
+**Measured negative result — conditioning the dominance gate on OCR confidence (do not retry
+without new evidence).** The gate cannot be loosened on frequency, because frequency does not
+order the two cases it has to separate: ಪೋಲೀಸರ must be CORRECTED at 39× while ಮಂಡಲಿಗೆ must be
+KEPT at 89×, so the keep case sits at the *higher* ratio. Tesseract's own per-word confidence
+looked like the missing signal, and statistically it is — over the nine pages, words the gate
+wrongly blocks have median confidence 63 against 91 for words the engine correctly leaves alone:
+
+| confidence | <60 | <70 | <80 | <85 |
+|---|---|---|---|---|
+| should-correct (13) | 46% | 62% | 77% | 77% |
+| should-keep (213) | 8% | 10% | 15% | 22% |
+
+That separation is real in aggregate and useless per word. Swept over thresholds {60, 70, 80} ×
+ratios {3, 5, 15, 50}, every cell bought fixes and paid for them in breaks, with **CER flat or
+worse**: the baseline is fixed 15 / broke 0 / CER 0.0516, and the best cell in the entire sweep
+is fixed 16 / broke 1 / CER 0.0516 — identical CER, precision 1.000 → 0.94. The 10% of
+should-keep words below the threshold are enough to eat the whole gain. Adding a bigram-support
+requirement on top makes it *inert* on real pages instead (fixed 15, broke 0, CER and WER
+unchanged to four decimals) — the bigram check rejects precisely the corrections the relaxation
+was meant to admit. Reverted.
+
+The remaining lesson: these 14 need evidence the pipeline does not currently have. Frequency
+cannot order them and confidence cannot either. That is a second, independent argument for a
+better OCR pass rather than more post-hoc correction.
 
 **Reading that list is not enough to act on it** — the 2c audit in `edit_distance.py` is the
 worked example. Counting which glyphs OCR confuses tells you what went *wrong*, not what the
