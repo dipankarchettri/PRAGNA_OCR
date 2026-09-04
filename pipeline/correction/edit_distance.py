@@ -58,6 +58,44 @@ CONFUSION_PAIRS: Dict[Tuple[str, str], float] = {
     ('ಜ', 'ಚ'): 0.25,
     ('ಲ', 'ರ'): 0.25,
 
+    # 2c. From a second empirical audit, on the nine real page/transcript
+    # pairs in tests/fixtures/real/. Method: align raw Tesseract output
+    # against the human transcript word-by-word, keep only word pairs of
+    # equal akshara length differing in exactly ONE cluster, and tally the
+    # cluster pair. That yields what OCR gets wrong -- but "wrong" is not
+    # the same as "unreachable", so each surviving candidate pair was then
+    # injected and re-tested to confirm it converts instances where the
+    # correct word is ABSENT from collect_kannada_candidates into instances
+    # where it is present. Only pairs that bought new reachability, on 2+
+    # distinct pages, over 2+ distinct lemmas, are here.
+    #
+    #   pair    obs  pages  newly reachable
+    #   ಸ/ಪ      6      5     3   (ಸಿಪಾಸೆ->ಪಿಪಾಸೆ, ಸರಿಗಳನ್ನು->ಪರಿಗಳನ್ನು)
+    #   ಿ/ೆ      7      5     4   (ಘಂಟಿಯಾಯಿತು->ಘಂಟೆಯಾಯಿತು, ಚೆಕ್ಕಣ್ಣ->ಚಿಕ್ಕಣ್ಣ)
+    #   ನ/ಪ      2      2     2   (ನಡೆಯುತ್ತಾನೆ->ಪಡೆಯುತ್ತಾನೆ)
+    #   ತ/ಕ      4      2     1   (ತೇಳುತ್ತಿದ್ದರು->ಕೇಳುತ್ತಿದ್ದರು)
+    #
+    # Two pairs the same audit ranked highly were REJECTED by that second
+    # test, and are recorded here so nobody re-derives them from the raw
+    # counts and re-adds them:
+    #
+    #   ಕ/ಯ   12 observations over 10 word types -- and 0 newly reachable.
+    #         Almost every instance is a subscript (ಉದ್ಕೋಗಿ, ಶಿಷ್ಕ,
+    #         ನ್ಕಾಯಮೂರ್ತಿ) already covered by the ್ಯ/್ಕ row in 4b; the
+    #         residue is one out-of-dictionary place name (ಕಯ್ಯೂರು), which
+    #         no confusion row can fix because the target must resolve to a
+    #         real word. CLAUDE.md named ಕ/ಯ as a missing pair on exactly
+    #         that count-based reasoning; it has been corrected there.
+    #   ಕ/ರ   2 observations, both the same word (ಬೇಕೆ->ಬೇರೆ), 0 newly
+    #         reachable.
+    #
+    # ಬ/ಲ was also rejected: it did buy 2, but both are inflections of one
+    # proper noun (ಕಲ್ಲಪ್ಪ) on one lemma, which is the profile of a page
+    # artifact rather than a glyph confusion.
+    ('ಸ', 'ಪ'): 0.25,
+    ('ನ', 'ಪ'): 0.30,
+    ('ತ', 'ಕ'): 0.25,
+
     # 3. Independent Vowels & Vowel Flips
     ('ಅ', 'ಆ'): 0.25,
     ('ಇ', 'ಈ'): 0.25,
@@ -65,6 +103,18 @@ CONFUSION_PAIRS: Dict[Tuple[str, str], float] = {
     ('ಎ', 'ಏ'): 0.25,
     ('ಒ', 'ಓ'): 0.20,
     ('ಎ', 'ವಿ'): 0.25,
+
+    # 3b. Matra confusion, from the 2c audit. ಿ and ೆ are both small hooks
+    # over the same base and are the most-confused *dependent sign* pair on
+    # real scans (7 observations across 5 pages, in both directions). This
+    # is the one gap the existing table left structurally open: item 6 of
+    # generate_kannada_candidates covers vowel *length* (ಿ<->ೀ) via
+    # VOWEL_MATRA_MAP, and _cluster_sub_cost prices any matra difference at
+    # MATRA_SUB_COST for the verifier -- but nothing ever GENERATED a
+    # ಿ<->ೆ swap, so the correct word was unreachable no matter how cheaply
+    # the verifier would have scored it. Priced at MATRA_SUB_COST to agree
+    # with what the verifier already charges for the same edit.
+    ('ಿ', 'ೆ'): 0.25,
 
     # 4. Multi-character / Subscript Ligature OCR Scans (High precision)
     ('ವ್ಮ', 'ಮ್ಮ'): 0.20,

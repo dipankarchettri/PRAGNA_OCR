@@ -57,6 +57,10 @@ python cli.py --batch ./scans/ --output-dir ./batch_results/
 # Measure the correction engine: CER/WER before vs after + fixed/broke counts
 ./venv/bin/python tools/correction_bench.py --pages 'tests/fixtures/eval/*_p0??.png'
 ./venv/bin/python tools/correction_bench.py --synthetic 200   # smoke test, no ground truth
+
+# Rank candidate GLYPH_CONFUSIONS rows by how many corrections they make
+# *reachable* (not by how often OCR makes the mistake -- see the tool's docstring)
+./venv/bin/python tools/mine_confusions.py
 ```
 
 Always run `tests/test_pipeline.py` and `tests/test_correction_precision.py` after touching
@@ -84,14 +88,21 @@ Current state, all three sets, at the production defaults (`kan`, psm 3, oem 1):
 
 | set | CER base → corrected | WER base → corrected | fixed | broke | precision |
 |---|---|---|---|---|---|
-| **9 real pages** | 0.0558 → **0.0520** | 0.2889 → **0.2697** | 10 | **0** | **1.000** |
+| **9 real pages** | 0.0558 → **0.0517** | 0.2889 → **0.2670** | 14 | **0** | **1.000** |
 | 24 typeset pages | 0.0053 → **0.0035** | 0.0335 → **0.0172** | 2 | 1 | 0.667 |
-| 300 synthetic lines | 0.0155 → **0.0103** | 0.1710 → **0.1027** | 350 | 39 | 0.900 |
+| 300 synthetic lines | 0.0151 → **0.0097** | 0.1614 → **0.0955** | 352 | 43 | 0.891 |
 
 The real pages are the honest number; the other two are regression gates. Note the synthetic
 CER is understated by the joiner normalization below — measured with joiners neutralized on
 both sides it is 0.0091, and the gap is the metric penalizing a deliberate normalization
 rather than real damage.
+
+**The synthetic row is not comparable across a change to `CONFUSION_PAIRS`.**
+`correction_bench` manufactures its noise *from* `GLYPH_CONFUSIONS` (`_confusion_sources`),
+so adding a row changes the corpus as well as the engine and the before/after are two
+different datasets. To compare, generate the documents once and ablate the rows out of the
+engine afterwards. Done that way for the 2c rows in `edit_distance.py`: on one fixed corpus,
+fixed 327 → 352, broke 39 → 43, precision 0.893 → 0.891, CER 0.0102 → 0.0097.
 
 **Where the remaining error actually is.** Of 128 single-word substitution errors across the
 nine real pages, the correct word is in the generated candidate set for only **16 (12.5%)**
@@ -99,7 +110,25 @@ nine real pages, the correct word is in the generated candidate set for only **1
 ceiling is candidate-generation *recall*, not its gates or its ranking. Of the 112 it never
 proposes, 75 are 1 akshara away and 37 are 2 or more, so widening the search radius is not
 sufficient either: the 1-akshara misses are glyph pairs absent from `GLYPH_CONFUSIONS`
-(ಮ/ಥ inside a conjunct, ಕ/ಯ) and proper nouns absent from the dictionary.
+(ಮ/ಥ inside a conjunct) and proper nouns absent from the dictionary.
+
+**Reading that list is not enough to act on it** — the 2c audit in `edit_distance.py` is the
+worked example. Counting which glyphs OCR confuses tells you what went *wrong*, not what the
+engine cannot *reach*, and the two lists differ sharply. ಕ/ಯ was named here as a missing pair
+on exactly that reasoning and is not one: it is the single most-observed unlisted confusion on
+these pages (12 instances, 10 word types, 3 pages), and adding it makes **zero** new corrections
+reachable, because nearly every instance is a subscript already covered by the `್ಯ`/`್ಕ` row
+and the residue is an out-of-dictionary place name. A confusion row can only pay off where the
+*rewritten word resolves to a real dictionary word*, so the test that decides is: inject the
+pair, and count instances that move from absent-in-`collect_kannada_candidates` to present.
+Two of the seven best-attested candidate pairs (ಕ/ಯ, ಕ/ರ) bought nothing by it, and a
+third (ಬ/ಲ) passed it on two instances that turn out to be one proper noun.
+
+`tools/mine_confusions.py` runs this whole audit and ranks candidates by that gain. Re-run it
+whenever a new page/transcript pair lands in `tests/fixtures/real/` — it is the one part of
+this engine that gets better purely by being given more ground truth. As of the nine current
+pages the only unlisted pair still showing a gain is ಂ/ು (2 observations, gain 1), held back
+as too thin to justify widening the search.
 
 This is also why growing the dictionary has stopped paying. 28.1% of correct Kannada words on
 these pages are absent from the 622k-form membership set and 11.7% are unattested in the
