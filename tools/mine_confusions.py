@@ -58,33 +58,79 @@ def _words(text: str) -> List[str]:
             if w and KANNADA_WORD_RE.match(w)]
 
 
-def mine(docs) -> Dict[Tuple[str, str], List[Tuple[str, str, str]]]:
-    """pair -> [(ocr_word, truth_word, page)] for single-cluster misreads."""
-    from pipeline.correction.graphemes import aksharas, split_cluster
+def _cluster_stream(words_list):
+    """Flatten words to (cluster, word_index), with a sentinel between words.
 
-    found: Dict[Tuple[str, str], List[Tuple[str, str, str]]] = defaultdict(list)
+    The sentinel makes word boundaries participate in the alignment, so a run
+    where OCR split or merged a word still lines its other clusters up instead
+    of shifting everything by one.
+    """
+    from pipeline.correction.graphemes import aksharas
+
+    seq, owner = [], []
+    for wi, w in enumerate(words_list):
+        if wi:
+            seq.append(' ')
+            owner.append(-1)
+        for c in aksharas(w):
+            seq.append(c)
+            owner.append(wi)
+    return seq, owner
+
+
+def mine(docs, min_run_similarity: float = 0.5):
+    """pair -> [(ocr_word, truth_word, page)] for single-cluster misreads.
+
+    Alignment is done on the AKSHARA stream of each differing run, not on whole
+    words. The earlier version of this tool compared words only, and only kept
+    word pairs of equal akshara length differing in exactly one cluster -- i.e.
+    it could see a word with one error in it and nothing else. That threw away
+    most of the evidence: on the nine reference pages, multi-word garbled runs
+    carry 1,407 reference characters against 929 for clean 1:1 substitutions,
+    and the largest unlisted confusion on those pages (ಸ/ನ, 9 occurrences) is
+    invisible word-wise because its words each carry a second error.
+
+    Aligning inside the run instead means a word may contribute several pairs,
+    and a run whose words do not line up 1:1 still contributes the parts that
+    do. `min_run_similarity` is the guard that keeps this honest: below it the
+    two sides have too little in common for positional pairing to mean
+    anything, and the whole run is dropped rather than mined for noise.
+    """
+    from collections import defaultdict
+    from pipeline.correction.graphemes import split_cluster
+
+    found = defaultdict(list)
     for doc in docs:
         ocr_w, gt_w = _words(doc.raw_text), _words(doc.reference)
         sm = difflib.SequenceMatcher(a=ocr_w, b=gt_w, autojunk=False)
         for tag, i1, i2, j1, j2 in sm.get_opcodes():
-            # An unequal-size replace block gives no reliable word alignment
-            # inside it, so pairing positionally there would invent evidence.
-            if tag != 'replace' or (i2 - i1) != (j2 - j1):
+            if tag != 'replace':
                 continue
-            for o, g in zip(ocr_w[i1:i2], gt_w[j1:j2]):
-                ao, ag = aksharas(o), aksharas(g)
-                if len(ao) != len(ag):
+            ao, own_o = _cluster_stream(ocr_w[i1:i2])
+            ag, own_g = _cluster_stream(gt_w[j1:j2])
+            inner = difflib.SequenceMatcher(a=ao, b=ag, autojunk=False)
+            if inner.ratio() < min_run_similarity:
+                continue
+            for t2, a1, a2, b1, b2 in inner.get_opcodes():
+                # Only equal-size replacements pair up positionally; an
+                # unequal block is an insertion or deletion of glyphs, which
+                # a substitution table cannot express anyway.
+                if t2 != 'replace' or (a2 - a1) != (b2 - b1):
                     continue
-                diff = [k for k in range(len(ao)) if ao[k] != ag[k]]
-                if len(diff) != 1:
-                    continue
-                co, cg = ao[diff[0]], ag[diff[0]]
-                bo, mo = split_cluster(co)
-                bg, mg = split_cluster(cg)
-                if bo != bg and mo == mg:
-                    found[(bo, bg)].append((o, g, doc.name))       # base swap
-                elif bo == bg and mo != mg:
-                    found[(''.join(mo), ''.join(mg))].append((o, g, doc.name))
+                for k in range(a2 - a1):
+                    co, cg = ao[a1 + k], ag[b1 + k]
+                    wo, wg = own_o[a1 + k], own_g[b1 + k]
+                    if wo < 0 or wg < 0:
+                        continue                     # the boundary sentinel
+                    o_word, g_word = ocr_w[i1 + wo], gt_w[j1 + wg]
+                    if not (KANNADA_WORD_RE.match(o_word) and KANNADA_WORD_RE.match(g_word)):
+                        continue
+                    bo, mo = split_cluster(co)
+                    bg, mg = split_cluster(cg)
+                    if bo != bg and mo == mg:
+                        found[(bo, bg)].append((o_word, g_word, doc.name))
+                    elif bo == bg and mo != mg:
+                        found[(''.join(mo), ''.join(mg))].append((o_word, g_word, doc.name))
     return found
 
 
@@ -131,6 +177,9 @@ def main() -> None:
     ap.add_argument('--min-obs', type=int, default=2, help='minimum observations')
     ap.add_argument('--min-pages', type=int, default=2,
                     help='minimum distinct pages -- guards against one bad scan')
+    ap.add_argument('--min-run-similarity', type=float, default=0.5,
+                    help='drop a differing run whose two sides share less than this '
+                         'fraction -- too garbled for positional pairing to mean anything')
     ap.add_argument('--cost', type=float, default=0.25,
                     help='cost to price injected pairs at while testing')
     args = ap.parse_args()
@@ -152,7 +201,7 @@ def main() -> None:
     with contextlib.redirect_stdout(io.StringIO()):
         docs = CB.load_page_docs(paths, args.lang, DEFAULT_PSM, DEFAULT_OEM)
 
-    found = mine(docs)
+    found = mine(docs, args.min_run_similarity)
     known = {frozenset(p) for p in CONFUSION_PAIRS}
     dictionary = get_dictionary()
 

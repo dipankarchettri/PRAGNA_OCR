@@ -96,6 +96,45 @@ CONFUSION_PAIRS: Dict[Tuple[str, str], float] = {
     ('ನ', 'ಪ'): 0.30,
     ('ತ', 'ಕ'): 0.25,
 
+    # 2d. Third audit, after widening tools/mine_confusions.py to align akshara
+    # streams INSIDE a differing run rather than comparing whole words. That
+    # widening was expected to be the big win -- multi-word garbled runs carry
+    # 1,407 reference characters on the nine pages against 929 for clean 1:1
+    # substitutions, and the word-level miner could not see into them at all.
+    #
+    # It was not. The widened miner surfaces plenty more observations (ನ/ಸ at 7
+    # over 4 pages, ಬ/ಟ, ಚ/ಟ, ನ/ಮ, ಪ/ಶ, ತ/ರ) and nearly all of them gain
+    # nothing, for a structural reason worth writing down: the multi-error
+    # words the wider alignment can now SEE are the words a single-substitution
+    # generator cannot FIX. Reaching a two-error word takes two simultaneous
+    # edits, and every generator in collect_kannada_candidates applies one
+    # mechanism at a time. Observability and reachability are different axes.
+    #
+    # Measured, so nobody has to re-derive it: of 76 residual errors whose
+    # truth IS a dictionary word, 21 are one confusion substitution away (those
+    # are ranking and gating losses, not table gaps), 3 are two substitutions
+    # away, and 52 are not reachable by confusion substitutions at any depth.
+    # A constrained two-substitution pass would therefore chase 3 errors -- not
+    # worth what it does to the search space. Do not build it.
+    #
+    # These four are what survived. Each converts exactly one residual error,
+    # which is thin on its own; each is also in a glyph family this table
+    # already represents, which is why they are here and the zero-gain pairs
+    # above are not:
+    #
+    #   ನ/ಸ    best-attested unlisted pair on these pages (7 observations,
+    #          4 pages, 7 distinct lemmas)      ಸಿಧಿ->ನಿಧಿ
+    #   ಮ/ಥ    the pair CLAUDE.md's own error analysis named as missing
+    #                                            ಸ್ಮಾಪಿಸುವ->ಸ್ಥಾಪಿಸುವ
+    #   ಫ/ಘ    aspirated-consonant shape family, cf. ಥ/ಫ and ಗ/ಘ in 1 and 2
+    #                                            ದೀರ್ಫ->ದೀರ್ಘ
+    #   ೃ/್ಯ   vocalic-r matra read as subscript ya -- the same fragile
+    #          ottakshara seam as 4b            ವಾಸ್ತವೃದ->ವಾಸ್ತವ್ಯದ
+    ('ನ', 'ಸ'): 0.25,
+    ('ಮ', 'ಥ'): 0.25,
+    ('ಫ', 'ಘ'): 0.25,
+    ('ೃ', '್ಯ'): 0.25,
+
     # 3. Independent Vowels & Vowel Flips
     ('ಅ', 'ಆ'): 0.25,
     ('ಇ', 'ಈ'): 0.25,

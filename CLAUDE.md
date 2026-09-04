@@ -88,9 +88,9 @@ Current state, all three sets, at the production defaults (`kan`, psm 3, oem 1):
 
 | set | CER base → corrected | WER base → corrected | fixed | broke | precision |
 |---|---|---|---|---|---|
-| **9 real pages** | 0.0558 → **0.0517** | 0.2889 → **0.2670** | 14 | **0** | **1.000** |
+| **9 real pages** | 0.0558 → **0.0516** | 0.2889 → **0.2658** | 15 | **0** | **1.000** |
 | 24 typeset pages | 0.0053 → **0.0035** | 0.0335 → **0.0172** | 2 | 1 | 0.667 |
-| 300 synthetic lines | 0.0151 → **0.0097** | 0.1614 → **0.0955** | 352 | 43 | 0.891 |
+| 300 synthetic lines | 0.0151 → **0.0101** | 0.1639 → **0.0970** | 352 | 44 | 0.889 |
 
 The real pages are the honest number; the other two are regression gates. Note the synthetic
 CER is understated by the joiner normalization below — measured with joiners neutralized on
@@ -102,7 +102,9 @@ rather than real damage.
 so adding a row changes the corpus as well as the engine and the before/after are two
 different datasets. To compare, generate the documents once and ablate the rows out of the
 engine afterwards. Done that way for the 2c rows in `edit_distance.py`: on one fixed corpus,
-fixed 327 → 352, broke 39 → 43, precision 0.893 → 0.891, CER 0.0102 → 0.0097.
+fixed 327 → 352, broke 39 → 43, precision 0.893 → 0.891, CER 0.0102 → 0.0097. And for the 2d
+rows: fixed 347 → 352, broke 44 → 44, precision 0.887 → 0.889. Both look like regressions in
+the uncontrolled table and are not.
 
 **Where the remaining error actually is.** Of 128 single-word substitution errors across the
 nine real pages, the correct word is in the generated candidate set for only **16 (12.5%)**
@@ -111,6 +113,28 @@ ceiling is candidate-generation *recall*, not its gates or its ranking. Of the 1
 proposes, 75 are 1 akshara away and 37 are 2 or more, so widening the search radius is not
 sufficient either: the 1-akshara misses are glyph pairs absent from `GLYPH_CONFUSIONS`
 (ಮ/ಥ inside a conjunct) and proper nouns absent from the dictionary.
+
+**The error budget, on the corrected output.** Across 10,439 reference characters on the nine
+real pages, what is left is no longer mostly single-word:
+
+| bucket | events | ref chars | share |
+|---|---|---|---|
+| **garbled multi-word runs** | 60 | **1,407** | 13.5% |
+| 1:1 word substitutions | 115 | 929 | 8.9% |
+| OCR split one word into two | 23 | 265 | 2.5% |
+| non-Kannada tokens, drops, merges | 32 | ~220 | 2.1% |
+
+and of the 115 remaining substitutions: **54** have a target absent from the dictionary
+(unreachable by any generator — loanwords, place names, productive compounds), 24 the engine
+declines to touch as already-valid, 22 are in the dictionary with no generator producing them,
+and 15 are reachable but lose to ranking. So roughly **half the residual substitutions are not
+a correction-engine problem at all**, which is the argument for a second OCR engine rather than
+more tuning.
+
+**Do not build a two-edit search.** Of 76 residual errors whose truth is a dictionary word, 21
+are one confusion substitution away (ranking/gating losses, not table gaps), **3** are two away,
+and 52 are not reachable by confusion substitutions at any depth. A constrained
+two-substitution pass would chase three errors.
 
 **Reading that list is not enough to act on it** — the 2c audit in `edit_distance.py` is the
 worked example. Counting which glyphs OCR confuses tells you what went *wrong*, not what the
@@ -123,6 +147,15 @@ and the residue is an out-of-dictionary place name. A confusion row can only pay
 pair, and count instances that move from absent-in-`collect_kannada_candidates` to present.
 Two of the seven best-attested candidate pairs (ಕ/ಯ, ಕ/ರ) bought nothing by it, and a
 third (ಬ/ಲ) passed it on two instances that turn out to be one proper noun.
+
+**Observability and reachability are different axes.** `mine_confusions.py` was widened to
+align akshara streams *inside* a differing run rather than comparing whole words, on the
+reasoning that garbled runs hold more error mass than clean substitutions (1,407 chars vs 929)
+and the word-level miner could not see into them. It surfaces plenty more observations — ನ/ಸ
+at 7 over 4 pages, plus ಬ/ಟ, ಚ/ಟ, ನ/ಮ, ಪ/ಶ, ತ/ರ — and nearly all gain zero, because the
+multi-error words the wider alignment can now *see* are exactly the words a
+single-substitution generator cannot *fix*. Keep the widening (it is strictly more evidence,
+and it found ನ/ಸ) but do not expect scope to convert into recall.
 
 `tools/mine_confusions.py` runs this whole audit and ranks candidates by that gain. Re-run it
 whenever a new page/transcript pair lands in `tests/fixtures/real/` — it is the one part of
