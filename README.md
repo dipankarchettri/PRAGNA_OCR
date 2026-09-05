@@ -246,6 +246,38 @@ near 100 DPI, at which conjuncts collapse into a smudge that no dictionary can r
 The bundled `tessdata/kan.traineddata` is the `tessdata_best` LSTM model; the smaller
 stock model is kept at `tessdata_standard/` for comparison.
 
+### Optional: the Surya engine (`--engine surya`)
+
+Surya is a second OCR engine, off by default. On the nine real page/transcript pairs it
+produces **lower raw error than Tesseract** — CER 0.0461 vs 0.0539, winning on 7 of 9 pages
+— and its raw output beats Tesseract's *fully corrected* output.
+
+```bash
+python3 -m venv venv-surya
+./venv-surya/bin/pip install 'surya-ocr==0.16.7' 'transformers>=4.56.1,<5'
+# match the CUDA build to your driver; on a 12.8 driver:
+./venv-surya/bin/pip install --index-url https://download.pytorch.org/whl/cu128 \
+    torch==2.11.0+cu128 torchvision
+
+python cli.py scan.pdf --engine surya
+```
+
+It runs in its own virtualenv on purpose: Surya pins `pillow<11` and this pipeline uses
+12.x, so a shared install downgrades PIL underneath ingestion. The pipeline drives it
+through a subprocess, so nothing here is imported unless you ask for `--engine surya`,
+and the default install stays free of torch and CUDA.
+
+⚠️ **Turn the correction engine down when using it.** The corrector's gates were calibrated
+against Tesseract's error distribution, and on Surya's output they are net-harmful — CER
+0.0462 → 0.0471 with 17 broken words, precision 0.585 against 1.000 on Tesseract. The best
+configuration measured is Surya with correction off (CER 0.0462, WER 0.2621), which still
+beats the Tesseract production pipeline. Re-tuning the gates for Surya is open work. See
+CLAUDE.md for the full table.
+
+Requires a GPU in practice (~10 s/page on an RTX 6000 Ada). Code is Apache-2.0; the model
+weights are a modified OpenRAIL-M, free for research, personal use, and organisations under
+$5M funding/revenue.
+
 ---
 
 ## 📂 Repository Structure

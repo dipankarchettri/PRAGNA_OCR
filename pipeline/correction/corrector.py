@@ -902,6 +902,39 @@ def correct_text(
 NON_TEXT_LINE_CONFIDENCE = 40.0
 
 
+# Second, independent non-text signal: a line that is mostly Latin letters on a
+# monolingual Kannada page is not text this pipeline can use. It is not merely
+# wrong, it is unrecoverable -- the tokenizer hands non-Kannada tokens through
+# untouched by design, so nothing downstream will ever repair or even flag it.
+#
+# For the Tesseract path this is a NO-OP and was measured to be one: with
+# --lang kan the engine has no Latin characters to emit, and adding this filter
+# left all nine real pages bit-identical (CER 0.0558 either way). It exists for
+# Surya, which is a general multilingual model with no language restriction and
+# hallucinates fluent-looking Latin out of graphic content:
+#
+#   conf 56.4  'terrare and the second the second'
+#   conf 40.6  'Carl State State'
+#
+# On page 08 that alone accounted for the entire difference between Surya
+# looking far worse than Tesseract (CER 0.1909) and far better (0.0065).
+# Confidence could not catch it -- those lines score 40-60, overlapping the
+# range real degraded prose occupies -- but script does, unambiguously.
+#
+# Counting characters rather than tokens on purpose: a genuine Kannada line
+# quoting an English title ("(Skylark)", which really does occur in this
+# corpus) stays majority-Kannada by character count and survives.
+_LATIN_CHAR_RE = re.compile(r'[A-Za-z]')
+_KANNADA_CHAR_RE = re.compile(r'[\u0C80-\u0CFF]')
+
+
+def is_latin_majority(text: str) -> bool:
+    """True if a line has more Latin letters than Kannada ones."""
+    latin = len(_LATIN_CHAR_RE.findall(text))
+    kannada = len(_KANNADA_CHAR_RE.findall(text))
+    return latin > kannada
+
+
 def correct_layout_lines(layout_lines: List[Dict[str, Any]], allowed_types: Optional[Set[str]] = None) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """
     Correct structured layout lines preserving bounding box / alignment tags.
@@ -931,7 +964,10 @@ def correct_layout_lines(layout_lines: List[Dict[str, Any]], allowed_types: Opti
             'height': line.get('height', 0),
             'page_num': line.get('page_num', 1),
             'ocr_confidence': conf,
-            'is_likely_non_text': conf is not None and conf < NON_TEXT_LINE_CONFIDENCE
+            'is_likely_non_text': (
+                (conf is not None and conf < NON_TEXT_LINE_CONFIDENCE)
+                or is_latin_majority(line.get('text', ''))
+            )
         })
         all_corrections.extend(res['corrections'])
 

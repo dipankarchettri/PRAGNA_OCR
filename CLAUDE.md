@@ -61,6 +61,9 @@ python cli.py --batch ./scans/ --output-dir ./batch_results/
 # Rank candidate GLYPH_CONFUSIONS rows by how many corrections they make
 # *reachable* (not by how often OCR makes the mistake -- see the tool's docstring)
 ./venv/bin/python tools/mine_confusions.py
+
+# Same bench against the Surya engine (needs venv-surya, see below)
+./venv/bin/python tools/correction_bench.py --pages 'tests/fixtures/real/*.png' --engine surya
 ```
 
 Always run `tests/test_pipeline.py` and `tests/test_correction_precision.py` after touching
@@ -274,6 +277,73 @@ Stages run in this fixed order (see `corrector.py`):
 **Non-text line filtering:** `correct_layout_lines()` flags each OCR'd line as `is_likely_non_text` when its mean Tesseract confidence falls below `NON_TEXT_LINE_CONFIDENCE` (40) -- below that, Tesseract isn't misreading degraded prose, it's hallucinating text rows out of non-text content (embedded photos, decorative banner art, logos). Validated against 7 real ground-truth pages spanning the hard real cases (faded scans, heavy Sanskrit vocabulary the dictionary doesn't cover, degraded photocopies): every genuine body-text line across all of them still cleared 55 confidence; only actual graphic content ever dropped below 40, into single digits. Deliberately confidence-only, not combined with a dictionary valid-word-ratio check -- ratio misfires on real Sanskrit-vocabulary text (0% dictionary hits at completely normal confidence), so it can't safely gate this. `pipeline/__init__.py` excludes flagged lines from the training-corpus text (`corrected_text` / exported `.txt`) but keeps them in `raw_text` and the generated PDF (`all_layout_lines`, unfiltered) for audit/visual fidelity -- nothing is silently discarded, only excluded from the clean-corpus output. Never applies to PDF-digital-extraction lines (no `conf` field -- never OCR'd from pixels).
 
 **Zero-hardcoding rule (strict, enforced in review):** never add word-specific or stem-specific mappings to `CONFUSION_PAIRS`, `GLYPH_CONFUSIONS`, `ocr_repairs.py`, or anywhere else in the correction engine — no `'ಧ್ಯಯ' -> 'ಧ್ಯಯನ'`-style special cases. Every fix must fall out of the universal mechanisms above (script normalization, optical confusion matrices, longest-match morphology, 1-edit search, n-gram ranking). New vocabulary belongs in `data/kn_IN.dic`, not as a conditional branch in code. This history is visible in git log (search for "hardcoding" / "stem-specific").
+
+### Surya, the second OCR engine (`--engine surya`)
+
+Added because two independent measurements said the headroom is in the OCR pass, not in
+correction: about half the residual substitutions have an out-of-dictionary target no generator
+can reach, and the reachable-but-failing ones need evidence neither frequency nor confidence
+supplies.
+
+**Raw OCR on the nine real pages, each engine with its own best non-text filtering:**
+
+| engine | filter | CER | WER |
+|---|---|---|---|
+| Tesseract | conf < 40 | 0.0539 | 0.2847 |
+| **Surya** | conf < 80 + Latin-majority | **0.0461** | **0.2628** |
+
+Surya wins on 7 of 9 pages, including the degraded page 04 that motivated this work (0.0951 →
+0.0681). Note the confidence thresholds are **not comparable between engines** — dropping
+Tesseract lines below 70 destroys real text (CER 0.0558 → 0.1133), while for Surya it helps.
+Compare each at its own setting.
+
+**End-to-end, and the finding that matters:**
+
+| config | CER | WER | fixed | broke | precision |
+|---|---|---|---|---|---|
+| Tesseract + full corrector (production) | 0.0516 | 0.2658 | 15 | **0** | **1.000** |
+| **Surya, no correction** | **0.0462** | **0.2621** | 0 | **0** | **1.000** |
+| Surya + `ocr_repair` only | 0.0456 | 0.2519 | 22 | 10 | 0.688 |
+| Surya + full corrector | 0.0471 | 0.2578 | 24 | 17 | 0.585 |
+
+**The correction engine is net-harmful on Surya output.** It takes CER from 0.0462 to 0.0471
+and breaks 17 words at precision 0.585, against 1.000 on Tesseract. That is not a Surya defect
+— every gate and cost in `pipeline/correction/` was calibrated against Tesseract's error
+distribution, and Surya's is different. Until it is re-tuned, **the best configuration measured
+is Surya with correction off**, which beats production on CER and WER at zero corruption risk.
+Re-tuning the gates against Surya is the obvious next piece of work and has not been done.
+
+**Page 08 is the cautionary tale.** Surya first measured 13× worse there than Tesseract
+(0.1909 vs 0.0146). Its Kannada was near-perfect at 99+ confidence; the entire gap was
+hallucinated Latin (`'Carl State State'`, `'LS ARS / COURS'`) at 40–60 confidence, overlapping
+the range real degraded prose occupies. Confidence could not separate it; script could.
+`is_latin_majority` in `corrector.py` now feeds `is_likely_non_text`, taking that page to
+0.0065. It is a measured no-op for Tesseract, which with `--lang kan` has no Latin to emit.
+
+**Setup** (isolated venv — Surya pins `pillow<11` and this pipeline runs 12.x, so a shared
+install silently downgrades PIL underneath ingestion):
+
+```bash
+python3 -m venv venv-surya
+./venv-surya/bin/pip install 'surya-ocr==0.16.7' 'transformers>=4.56.1,<5'
+# match the CUDA build to your driver; on a 12.8 driver:
+./venv-surya/bin/pip install --index-url https://download.pytorch.org/whl/cu128 \
+    torch==2.11.0+cu128 torchvision
+```
+
+Pinned to **0.16.7 deliberately**: 0.22 removed the in-process torch predictor and drives
+inference through vLLM (spawning a Docker container), llama.cpp, or a remote OpenAI-compatible
+endpoint. None is a reasonable dependency here. 0.16.7 is the last line with plain
+`FoundationPredictor` + `RecognitionPredictor`. Roughly 10 s/page on an RTX 6000 Ada after a
+one-off model load, so callers batch whole documents (`surya_ocr_images_with_layout` takes a
+list) rather than looping per page.
+
+**Licensing.** Code is Apache-2.0; weights are a modified AI Pubs Open RAIL-M (free for
+research, personal use, and organisations under $5M funding/revenue). Unlike the excluded
+Krutrim models there is **no non-compete clause**, and Datalab ships document-OCR tooling
+rather than an Indic LLM, so nothing here restricts building a Kannada training corpus. The
+OpenRAIL-M use restrictions are harm-based and propagate to derivatives — read them before
+redistributing the corpus itself.
 
 ### Other pipeline modules
 

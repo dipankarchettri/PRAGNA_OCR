@@ -89,3 +89,4 @@ extended_data/
 # Real page/transcript fixtures live in tests/fixtures/real/ and ARE committed
 # -- they are small, and they are the only honest measurement this pipeline
 # has. Source images came from the "Image nd Txt" working folder.
+venv-surya/

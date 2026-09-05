@@ -18,6 +18,7 @@ from .ingestion import (
 )
 from .ocr import (
     is_tesseract_available, ocr_image, ocr_image_with_layout,
+    is_surya_available, surya_ocr_images_with_layout,
     SUPPORTED_LANGUAGES, DEFAULT_PSM, DEFAULT_OEM
 )
 from .correction import (
@@ -138,7 +139,8 @@ def process_document(
     psm: int = DEFAULT_PSM,
     oem: int = DEFAULT_OEM,
     min_confidence: int = 0,
-    adaptive_contrast: bool = True
+    adaptive_contrast: bool = True,
+    engine: str = 'tesseract'
 ) -> Dict[str, Any]:
     """
     End-to-end processing pipeline for a PDF or image file:
@@ -347,7 +349,15 @@ def process_document(
             img.save(img_path, 'PNG')
             saved_images_paths.append(img_path)
 
-        if adaptive_contrast:
+        if engine == 'surya':
+            # Surya has no language flag, no psm/oem, and its own line
+            # detection, so none of the Tesseract tuning applies. The
+            # adaptive-contrast A/B is skipped too: it picks a run by comparing
+            # Tesseract's mean word confidence between them, and Surya scores
+            # whole lines on a different scale, so the comparison is not
+            # meaningful and would double an already GPU-bound pass.
+            lines = surya_ocr_images_with_layout([img], page_nums=[1])[0]
+        elif adaptive_contrast:
             lines = _ocr_with_adaptive_contrast(img, lang, 1, psm, oem, min_confidence)
         else:
             lines = ocr_image_with_layout(

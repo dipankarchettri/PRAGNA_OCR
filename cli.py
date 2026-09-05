@@ -25,7 +25,10 @@ from pipeline import (
     process_text_input,
     init_pipeline
 )
-from pipeline.ocr import is_tesseract_available, SUPPORTED_LANGUAGES, DEFAULT_PSM, DEFAULT_OEM
+from pipeline.ocr import (
+    is_tesseract_available, is_surya_available,
+    SUPPORTED_LANGUAGES, DEFAULT_PSM, DEFAULT_OEM, OCR_ENGINES
+)
 from pipeline.ingestion import SUPPORTED_IMAGE_EXTENSIONS
 
 
@@ -47,6 +50,7 @@ def handle_single_file(args):
     print(f"[*] Processing file: {Path(filepath).name}")
     print(f"    Language      : {args.lang}")
     print(f"    DPI           : {args.dpi}")
+    print(f"    Engine        : {args.engine}")
     print(f"    PSM / OEM     : {args.psm} / {args.oem}")
     print(f"    Generate PDF  : {'Yes' if not args.no_pdf else 'No'}")
     print(f"    Save Images   : {'Yes' if args.save_images else 'No'}\n")
@@ -69,6 +73,7 @@ def handle_single_file(args):
             oem=args.oem,
             min_confidence=args.min_confidence,
             adaptive_contrast=not args.no_adaptive_contrast,
+            engine=args.engine,
             output_dir=args.output_dir,
             save_pdf=not args.no_pdf,
             save_images=args.save_images,
@@ -126,6 +131,7 @@ def handle_batch(args):
                 oem=args.oem,
                 min_confidence=args.min_confidence,
                 adaptive_contrast=not args.no_adaptive_contrast,
+                engine=args.engine,
                 output_dir=item_out,
                 save_pdf=not args.no_pdf,
                 save_images=args.save_images
@@ -178,6 +184,10 @@ Kannada page lets Tesseract emit Latin for ambiguous glyphs.
     parser.add_argument('--dpi', '-d', type=int, default=400, help='DPI for PDF page rasterization (default: 400)')
     parser.add_argument('--psm', type=int, default=DEFAULT_PSM, help=f'Tesseract page segmentation mode (default: {DEFAULT_PSM} = automatic; try 6 on a page that is one uniform text block)')
     parser.add_argument('--oem', type=int, default=DEFAULT_OEM, help=f'Tesseract OCR engine mode (default: {DEFAULT_OEM} = LSTM only)')
+    parser.add_argument('--engine', choices=OCR_ENGINES, default='tesseract',
+                        help='OCR engine (default: tesseract). "surya" needs venv-surya '
+                             '-- see pipeline/ocr/surya_engine.py. Lower CER on real scans '
+                             '(0.0462 vs 0.0516 end-to-end) but ignores --lang/--psm/--oem.')
     parser.add_argument('--min-confidence', type=int, default=0, help='Drop OCR words below this confidence (0-100, default: 0 = keep all)')
     parser.add_argument('--no-adaptive-contrast', action='store_true', help='Skip the extra contrast-boosted OCR pass (faster, but misses gains on faded scans)')
     parser.add_argument('--output-dir', '-o', help='Output directory for generated files')

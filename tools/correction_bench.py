@@ -92,24 +92,37 @@ def strip_transcriber_notes(text: str) -> str:
     return _ANNOTATION_RE.sub(drop, text)
 
 
-def load_page_docs(paths: List[str], lang: str, psm: int, oem: int) -> List[Doc]:
-    """OCR each image once; ground truth is the same-basename .txt file."""
-    from pipeline.ingestion import load_and_preprocess_image, normalize_resolution, preprocess_for_ocr
-    from pipeline.ocr import ocr_image_with_layout
+def load_page_docs(paths: List[str], lang: str, psm: int, oem: int,
+                   engine: str = 'tesseract') -> List[Doc]:
+    """OCR each image once; ground truth is the same-basename .txt file.
 
-    docs = []
+    With engine='surya' the pages are OCR'd in ONE batch rather than one call
+    per page -- the Surya model load costs far more than a page does, so a
+    per-page loop would spend most of its time reloading the model. lang/psm/oem
+    are Tesseract-only and ignored there.
+    """
+    from pipeline.ingestion import load_and_preprocess_image, normalize_resolution, preprocess_for_ocr
+
+    usable, images, references = [], [], []
     for path in paths:
         gt_path = os.path.splitext(path)[0] + '.txt'
         if not os.path.exists(gt_path):
             print(f"  skipping {os.path.basename(path)}: no {os.path.basename(gt_path)} alongside it")
             continue
-
         img = load_and_preprocess_image(path, enhance_contrast=False)
-        img = preprocess_for_ocr(normalize_resolution(img))
-        lines = ocr_image_with_layout(img, lang=lang, psm=psm, oem=oem)
-        reference = strip_transcriber_notes(open(gt_path, encoding='utf-8').read())
-        docs.append(Doc(os.path.basename(path), lines, reference))
-    return docs
+        images.append(preprocess_for_ocr(normalize_resolution(img)))
+        references.append(strip_transcriber_notes(open(gt_path, encoding='utf-8').read()))
+        usable.append(path)
+
+    if engine == 'surya':
+        from pipeline.ocr import surya_ocr_images_with_layout
+        per_page = surya_ocr_images_with_layout(images, page_nums=list(range(1, len(images) + 1)))
+    else:
+        from pipeline.ocr import ocr_image_with_layout
+        per_page = [ocr_image_with_layout(im, lang=lang, psm=psm, oem=oem) for im in images]
+
+    return [Doc(os.path.basename(p), lines, ref)
+            for p, lines, ref in zip(usable, per_page, references)]
 
 
 def load_text_pair(noisy_path: str, clean_path: str) -> List[Doc]:
@@ -405,6 +418,8 @@ def main():
     ap.add_argument('--lang', default='kan')
     # Track the production defaults rather than hardcoding, so the bench never
     # silently measures a configuration the pipeline does not actually run.
+    ap.add_argument('--engine', choices=('tesseract', 'surya'), default='tesseract',
+                    help='OCR engine for --pages (default: tesseract)')
     ap.add_argument('--psm', type=int, default=DEFAULT_PSM)
     ap.add_argument('--oem', type=int, default=DEFAULT_OEM)
     ap.add_argument('--verbose', '-v', action='store_true', help='per-page breakdown')
@@ -422,7 +437,7 @@ def main():
         for pattern in args.pages:
             paths.extend(sorted(glob.glob(pattern)) if any(c in pattern for c in '*?[') else [pattern])
         print(f'OCR-ing {len(paths)} page image(s)...')
-        docs = load_page_docs(paths, args.lang, args.psm, args.oem)
+        docs = load_page_docs(paths, args.lang, args.psm, args.oem, engine=args.engine)
     elif args.text_pair:
         docs = load_text_pair(*args.text_pair)
     else:
